@@ -2,14 +2,16 @@
 # TypeContracts.jl — Full Example
 #
 # Demonstrates all features:
-#   1. Discoverability         — query what an abstract type requires
-#   2. Test-time checking      — verify implementations in tests
+#   1. Discoverability          — query what an abstract type requires
+#   2. Test-time checking       — verify implementations in tests
 #   3. Compile-time enforcement — @verify blocks precompilation
-#   4. Retroactive contracts   — add contracts to types you don't own
-#   5. Optional methods        — methods a type may skip
+#   4. Retroactive contracts    — add contracts to types you don't own
+#   5. Optional methods         — methods a type may skip
 #   6. Holy trait dispatch      — dispatch on interface satisfaction
-#   7. Behavioral invariants   — test correctness, not just existence
-#   8. describe()              — pretty-print full contract
+#   7. Behavioral invariants    — test correctness, not just existence
+#   8. describe()               — pretty-print full contract
+#   9. Return type enforcement  — inferred return type checked against contract
+#  10. Parametric contracts     — type variables (T, N) in method signatures
 # ══════════════════════════════════════════════════════════════════════
 
 # Run from the TypeContracts package directory:
@@ -233,6 +235,103 @@ resize(i::Icon, factor::Float64) = Icon(i.name, i.scale * factor)
 
 describe(Icon, Val(:all))
 println()
+println("=" ^ 60)
+println("All checks passed.")
+println("=" ^ 60)
+
+# ── Return type enforcement ───────────────────────────────────────────
+
+println()
+println("=" ^ 60)
+println("RETURN TYPE ENFORCEMENT")
+println("=" ^ 60)
+println()
+
+# Contract declares area() :: Float64
+# If a type returns the wrong type, @verify catches it at load time.
+
+struct BadCircle <: AbstractShape
+    r::Float64
+end
+
+area(b::BadCircle)      = "oops"           # wrong: returns String
+perimeter(b::BadCircle) = 2π * b.r
+translate(b::BadCircle, dx::Float64, dy::Float64) = BadCircle(b.r)
+
+result = satisfies(BadCircle, AbstractShape)
+println("satisfies(BadCircle, AbstractShape)")
+println("  satisfied       = $(result.satisfied)")
+println("  missing_methods = $(result.missing_methods)")
+println()
+
+# Uncomment to see @verify fail at load time:
+# @verify BadCircle   # → InterfaceError: return Float64? inferred String ⊄ Float64
+
+# ── Parametric contracts ──────────────────────────────────────────────
+
+println("=" ^ 60)
+println("PARAMETRIC CONTRACTS")
+println("=" ^ 60)
+println()
+
+# A generic container interface. T is a type variable bound to the
+# element type of the concrete subtype.
+abstract type AbstractContainer{T} end
+
+function cget end
+function cset! end
+function clen end
+
+@contract AbstractContainer{T} begin
+    cget(::Self, ::Int) :: T          # return type = element type
+    cset!(::Self, ::T, ::Int)         # argument type = element type
+    clen(::Self) :: Int
+end
+
+println("Contract for AbstractContainer{T}:")
+describe(AbstractContainer)
+println()
+
+# Conforming implementation: Float64 container
+struct FloatBox <: AbstractContainer{Float64}
+    data::Vector{Float64}
+end
+
+cget(b::FloatBox, i::Int)::Float64      = b.data[i]
+cset!(b::FloatBox, v::Float64, i::Int)  = (b.data[i] = v)
+clen(b::FloatBox)::Int                  = length(b.data)
+
+@verify FloatBox
+println("@verify FloatBox  — passed (Float64 element type, all return types match)")
+
+# Conforming implementation: String container
+struct StringBox <: AbstractContainer{String}
+    data::Vector{String}
+end
+
+cget(b::StringBox, i::Int)::String      = b.data[i]
+cset!(b::StringBox, v::String, i::Int)  = (b.data[i] = v)
+clen(b::StringBox)::Int                 = length(b.data)
+
+@verify StringBox
+println("@verify StringBox — passed (String element type, all return types match)")
+println()
+
+# Show that satisfies() detects a type-parameter mismatch
+struct BrokenBox <: AbstractContainer{Int}
+    data::Vector{Int}
+end
+
+cget(b::BrokenBox, i::Int)::String = "wrong"   # should return Int
+cset!(b::BrokenBox, v::Int, i::Int) = (b.data[i] = v)
+clen(b::BrokenBox)::Int             = length(b.data)
+
+result = satisfies(BrokenBox, AbstractContainer)
+println("satisfies(BrokenBox, AbstractContainer)   [cget returns String instead of Int]")
+println("  satisfied       = $(result.satisfied)")
+println("  missing_methods = $(result.missing_methods)")
+println()
+
 println("=" ^ 60)
 println("All checks passed.")
 println("=" ^ 60)
