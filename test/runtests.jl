@@ -1,5 +1,6 @@
 using Test
 using TypeContracts
+using InteractiveUtils: code_warntype
 
 # ══════════════════════════════════════════════════════════════════════
 # Test fixtures — types and functions at module scope
@@ -289,6 +290,26 @@ end
 bget(b::WrongBucket, i::Int)::String  = "wrong"     # wrong return type
 bset!(b::WrongBucket, v::Int, i::Int) = (b.data[i] = v)
 blen(b::WrongBucket)::Int             = length(b.data)
+
+# ── Fixtures for documentation / juliac testsets ──────────────────────
+
+abstract type AbstractRepeat end
+function rep_fn end
+@contract AbstractRepeat "v1" begin
+    rep_fn(::Self) => "does a thing"
+end
+@invariants AbstractRepeat begin
+    "always true" => x -> true
+end
+
+abstract type AbstractRT end
+function rt_fn end
+@contract AbstractRT begin
+    rt_fn(::Self)
+end
+struct RTGood <: AbstractRT end
+rt_fn(::RTGood) = 1
+struct RTBad <: AbstractRT end
 
 # ══════════════════════════════════════════════════════════════════════
 # Tests
@@ -794,6 +815,154 @@ blen(b::WrongBucket)::Int             = length(b.data)
                 true
             end
             @test threw
+        end
+    end
+
+    # ── Documentation integration ─────────────────────────────────────
+
+    @testset "Documentation integration" begin
+        # Fixtures: an owned type with a prior docstring + descriptions.
+        "Prior docstring for AbstractGizmo."
+        abstract type AbstractGizmo end
+        function gizmo_spin end
+        function gizmo_label end
+
+        @contract AbstractGizmo "A spinnable gizmo." begin
+            gizmo_spin(::Self)::Int     => "revolutions per spin"
+            :optional
+            gizmo_label(::Self)::String => "display label"
+        end
+
+        @testset "per-method docs stored on MethodSpec" begin
+            specs = list_contract(AbstractGizmo)
+            spin = first(filter(s -> occursin("gizmo_spin", s.description), specs))
+            @test spin.doc == "revolutions per spin"
+            label = first(filter(s -> occursin("gizmo_label", s.description), specs))
+            @test label.doc == "display label"
+        end
+
+        @testset "interface description stored" begin
+            @test TypeContracts._descriptions[AbstractGizmo] == "A spinnable gizmo."
+        end
+
+        @testset "describe surfaces prose" begin
+            buf = IOBuffer()
+            describe(AbstractGizmo; io=buf)
+            out = String(take!(buf))
+            @test occursin("A spinnable gizmo.", out)
+            @test occursin("revolutions per spin", out)
+            @test occursin("display label", out)
+        end
+
+        @testset "contract with no descriptions still works" begin
+            abstract type AbstractPlain end
+            function plain_fn end
+            @contract AbstractPlain begin
+                plain_fn(::Self)
+            end
+            specs = list_contract(AbstractPlain)
+            @test specs[1].doc == ""
+            @test TypeContracts._descriptions[AbstractPlain] == ""
+        end
+
+        @testset "non-string method description is rejected" begin
+            @test_throws LoadError @eval @contract AbstractGizmo begin
+                gizmo_spin(::Self) => 42
+            end
+        end
+
+        @testset "?-doc renders contract section for owned type" begin
+            md = TypeContracts._contract_markdown(AbstractGizmo)
+            rendered = sprint(show, MIME("text/plain"), md)
+            @test occursin("TypeContracts Interface", rendered)
+            @test occursin("A spinnable gizmo.", rendered)
+            @test occursin("revolutions per spin", rendered)
+            @test occursin("Mandatory methods", rendered)
+            @test occursin("Optional methods", rendered)
+        end
+
+        @testset "?-doc preserves the prior docstring (coexists)" begin
+            import REPL
+            help_md = Core.eval(@__MODULE__, REPL.helpmode(IOBuffer(), "AbstractGizmo"))
+            rendered = sprint(show, MIME("text/plain"), help_md)
+            @test occursin("Prior docstring for AbstractGizmo.", rendered)
+            @test occursin("TypeContracts Interface", rendered)
+        end
+
+        @testset "retroactive contract documents a foreign Base type" begin
+            @contract AbstractRange "A range contract (retroactive)." begin
+                first(::Self) => "first element"
+                last(::Self)  => "last element"
+            end
+            import REPL
+            help_md = Core.eval(@__MODULE__, REPL.helpmode(IOBuffer(), "AbstractRange"))
+            rendered = sprint(show, MIME("text/plain"), help_md)
+            # Base's own AbstractRange docs remain…
+            @test occursin("Supertype for ranges", rendered) || occursin("AbstractRange", rendered)
+            # …and our contract section is appended.
+            @test occursin("A range contract (retroactive).", rendered)
+            @test occursin("first element", rendered)
+        end
+
+        @testset "invariants refresh the doc" begin
+            abstract type AbstractWheel end
+            function wheel_radius end
+            @contract AbstractWheel "A wheel." begin
+                wheel_radius(::Self)::Float64 => "radius in metres"
+            end
+            @invariants AbstractWheel begin
+                "radius is positive" => x -> wheel_radius(x) > 0
+            end
+            md = TypeContracts._contract_markdown(AbstractWheel)
+            rendered = sprint(show, MIME("text/plain"), md)
+            @test occursin("radius in metres", rendered)
+            @test occursin("radius is positive", rendered)
+        end
+
+        @testset "re-registration does not warn (clears prior entry)" begin
+            # AbstractRepeat / rep_fn are module-scope fixtures (defined below).
+            # Two attaches (contract + invariants) on the same type must not warn.
+            @test_nowarn TypeContracts._attach_contract_doc(AbstractRepeat)
+            @test_nowarn TypeContracts._attach_contract_doc(AbstractRepeat)
+        end
+    end
+
+    # ── juliac / static-compilation compatibility ─────────────────────
+
+    @testset "juliac compatibility" begin
+        @testset "disable_docs! makes attachment a no-op" begin
+            abstract type AbstractNoDoc end
+            function nd_fn end
+
+            disable_docs!()
+            try
+                @contract AbstractNoDoc "should not be attached" begin
+                    nd_fn(::Self) => "prose"
+                end
+                binding = Base.Docs.Binding(@__MODULE__, :AbstractNoDoc)
+                meta = Base.Docs.meta(@__MODULE__)
+                attached = haskey(meta, binding) && haskey(meta[binding].docs, TypeContracts._DOC_SIG)
+                @test attached == false
+            finally
+                enable_docs!()
+            end
+
+            # Registry still populated even with docs disabled.
+            @test !isempty(list_contract(AbstractNoDoc))
+        end
+
+        @testset "runtime path interface_trait is doc-free and works regardless" begin
+            # AbstractRT / rt_fn / RTGood / RTBad are module-scope fixtures (below).
+            @test interface_trait(AbstractRT, RTGood) isa Implemented{AbstractRT}
+            @test interface_trait(AbstractRT, RTBad)  isa NotImplemented{AbstractRT}
+
+            # The inferred code for interface_trait must not reference the
+            # Markdown / Base.Docs machinery (kept out of juliac runtime).
+            io = IOBuffer()
+            code_warntype(io, TypeContracts.interface_trait, Tuple{Type{AbstractRT}, Type{RTGood}})
+            s = String(take!(io))
+            @test !occursin("Markdown", s)
+            @test !occursin("_attach_contract_doc", s)
         end
     end
 

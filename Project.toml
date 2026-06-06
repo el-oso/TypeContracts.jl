@@ -1,10 +1,11 @@
 name = "TypeContracts"
 uuid = "c7a3f1e2-84b5-4d69-9e0a-1f2b3c4d5e6f"
 authors = ["el_oso"]
-version = "0.2.0"
+version = "0.3.0"
 
 [deps]
 InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
+Markdown = "d6f4376e-aef5-505a-96c1-9c027394607a"
 
 [compat]
 julia = "1.9"
