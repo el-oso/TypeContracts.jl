@@ -1,12 +1,11 @@
 module TypeContracts
 
 using InteractiveUtils: supertypes, subtypes
-using Markdown: Markdown
 
 export @contract, @verify, @verify_all, @invariants,
        check_contract, satisfies, list_contract, registered_contracts,
        test_behavior, list_behaviors, registered_behaviors,
-       describe, interface_trait, disable_docs!, enable_docs!,
+       describe, interface_trait,
        Self, TypeParamRef, InterfaceError, MethodSpec, BehaviorSpec,
        Implemented, NotImplemented
 
@@ -152,31 +151,10 @@ Return a copy of the global behavior registry: every type that has registered
 """
 registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
 
-# Master switch for `?`-doc integration. Set to `false` (via `disable_docs!()`)
-# before registering contracts in a juliac/`--trim` static-compilation context,
-# so the `Markdown` + `Base.Docs` machinery is never entered at runtime. The
-# structural/runtime path (`interface_trait`) does not touch this regardless.
-const _DOCS_ENABLED = Ref(true)
-
-"""
-    disable_docs!()
-
-Turn off the `?`-documentation integration. Call before registering contracts
-in a statically compiled (juliac `--trim`) binary that runs `@contract` /
-`@invariants` from `__init__`, so `Markdown` / `Base.Docs` are not pulled into
-the runtime image. Has no effect on `check_contract`, `satisfies`,
-`interface_trait`, or `describe`.
-
-See also [`enable_docs!`](@ref).
-"""
-disable_docs!() = (_DOCS_ENABLED[] = false; nothing)
-
-"""
-    enable_docs!()
-
-Re-enable `?`-documentation integration after a call to [`disable_docs!`](@ref).
-"""
-enable_docs!()  = (_DOCS_ENABLED[] = true;  nothing)
+# Hook set by ext/TypeContractsREPLExt.jl when REPL is loaded (interactive sessions).
+# Stays `nothing` in scripts and juliac-compiled binaries, keeping Markdown out of
+# those contexts automatically — no manual opt-out required.
+const _attach_doc_impl = Ref{Union{Nothing,Function}}(nothing)
 
 # ── Internal ──────────────────────────────────────────────────────────
 
@@ -545,112 +523,20 @@ function describe(::Type{T}, ::Val{:all}; io::IO=stdout) where {T}
 end
 
 # ── Documentation integration ─────────────────────────────────────────
-# Renders a contract to Markdown and attaches it to the target type's `?`-docs.
-# A distinct sentinel signature lets our section coexist with any docstring the
-# user (or Base) already wrote — `?T` shows both, separated by a rule. This
-# works uniformly for owned types and retroactive contracts on foreign types.
+# Doc attachment is handled by ext/TypeContractsREPLExt.jl, which loads
+# automatically when REPL is present (interactive sessions). In scripts and
+# juliac binaries REPL is absent, so the extension never loads, Markdown is
+# never pulled in, and the hook below stays a no-op — no manual opt-out needed.
 
-const _DOC_SIG = Tuple{Val{:TypeContractsContract}}
-
-"""
-    _contract_markdown(T::Type) -> Markdown.MD
-
-Build the `?`-visible contract section for `T` from the registered prose
-description, method specs, and behavioral invariants.
-"""
-function _contract_markdown(::Type{T}) where {T}
-    io = IOBuffer()
-    println(io, "# TypeContracts Interface")
-    println(io)
-
-    desc = get(_descriptions, T, "")
-    if !isempty(desc)
-        println(io, desc)
-        println(io)
-    end
-
-    specs = get(_registry, T, nothing)
-    if !isnothing(specs)
-        mandatory = filter(s -> !s.optional, specs)
-        optional  = filter(s -> s.optional, specs)
-        _md_method_block(io, "Mandatory methods", mandatory)
-        _md_method_block(io, "Optional methods", optional)
-    end
-
-    behaviors = get(_behaviors, T, nothing)
-    if !isnothing(behaviors)
-        mandatory_b = filter(b -> !b.optional, behaviors)
-        optional_b  = filter(b -> b.optional, behaviors)
-        _md_behavior_block(io, "Behavioral invariants", mandatory_b)
-        _md_behavior_block(io, "Optional invariants", optional_b)
-    end
-
-    Markdown.parse(String(take!(io)))
+function _attach_contract_doc(::Type{T}) where {T}
+    f = _attach_doc_impl[]
+    isnothing(f) || f(T)
+    nothing
 end
 
 # Plain-text method line for `describe`: "sig — doc" when prose is present.
 function _method_line(s::MethodSpec)
     isempty(s.doc) ? s.description : string(s.description, " — ", s.doc)
-end
-
-function _md_method_block(io, title, specs)
-    isempty(specs) && return
-    println(io, "**", title, "**")
-    println(io)
-    for s in specs
-        line = "  - `" * s.description * "`"
-        isempty(s.doc) || (line *= " — " * s.doc)
-        println(io, line)
-    end
-    println(io)
-    return
-end
-
-function _md_behavior_block(io, title, behaviors)
-    isempty(behaviors) && return
-    println(io, "**", title, "**")
-    println(io)
-    for b in behaviors
-        println(io, "  - ", b.description)
-    end
-    println(io)
-    return
-end
-
-"""
-    _attach_contract_doc(T::Type)
-
-Attach (or refresh) the contract's Markdown section to `T`'s documentation,
-making it visible via `?T`. Called from `@contract` and `@invariants` so the
-doc always reflects the latest registered state.
-
-Load-time only — never reached from the `interface_trait` runtime path. A no-op
-when `_DOCS_ENABLED[]` is false, and any failure is swallowed so a stripped doc
-system can never break module loading or a compiled binary.
-"""
-function _attach_contract_doc(::Type{T}) where {T}
-    _DOCS_ENABLED[] || return nothing
-    try
-        md      = _contract_markdown(T)
-        mod     = parentmodule(T)
-        binding = Base.Docs.Binding(mod, nameof(T))
-        # Drop any prior contract entry under our sentinel signature first, so
-        # re-registration (e.g. @contract then @invariants) doesn't emit the
-        # "Replacing docs" warning. Leaves the user's/Base's own docstring intact.
-        metadict = Base.Docs.meta(mod)
-        if haskey(metadict, binding)
-            multidoc = metadict[binding]
-            if haskey(multidoc.docs, _DOC_SIG)
-                delete!(multidoc.docs, _DOC_SIG)
-                filter!(!=(_DOC_SIG), multidoc.order)
-            end
-        end
-        docstr = Base.Docs.docstr(md, Dict{Symbol,Any}(:module => mod, :path => nothing, :linenumber => 0))
-        Base.Docs.doc!(mod, binding, docstr, _DOC_SIG)
-    catch
-        # Documentation is best-effort; never fatal.
-    end
-    nothing
 end
 
 # ── Macros ────────────────────────────────────────────────────────────
