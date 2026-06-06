@@ -103,7 +103,28 @@ end
 
 # ── Holy Trait Types ──────────────────────────────────────────────────
 
+"""
+    Implemented{I}
+
+Singleton trait type returned by [`interface_trait`](@ref) when a type satisfies
+all mandatory methods of interface `I`. Used as a dispatch key.
+
+```julia
+_process(::Implemented{AbstractShape}, x) = area(x)
+```
+"""
 struct Implemented{I} end
+
+"""
+    NotImplemented{I}
+
+Singleton trait type returned by [`interface_trait`](@ref) when a type does **not**
+satisfy all mandatory methods of interface `I`. Used as a dispatch key.
+
+```julia
+_process(::NotImplemented{AbstractShape}, x) = error("not a shape")
+```
+"""
 struct NotImplemented{I} end
 
 Base.show(io::IO, ::Implemented{I}) where {I}    = print(io, "Implemented{$I}()")
@@ -115,7 +136,20 @@ const _registry     = Dict{Type, Vector{MethodSpec}}()
 const _behaviors    = Dict{Type, Vector{BehaviorSpec}}()
 const _descriptions = Dict{Type, String}()   # interface-level prose
 
+"""
+    registered_contracts() -> Dict{Type, Vector{MethodSpec}}
+
+Return a copy of the global contract registry: every abstract type that has a
+registered `@contract`, mapped to its `Vector{MethodSpec}`.
+"""
 registered_contracts()::Dict{Type, Vector{MethodSpec}}   = copy(_registry)
+
+"""
+    registered_behaviors() -> Dict{Type, Vector{BehaviorSpec}}
+
+Return a copy of the global behavior registry: every type that has registered
+`@invariants`, mapped to its `Vector{BehaviorSpec}`.
+"""
 registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
 
 # Master switch for `?`-doc integration. Set to `false` (via `disable_docs!()`)
@@ -125,15 +159,23 @@ registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
 const _DOCS_ENABLED = Ref(true)
 
 """
-    disable_docs!()  /  enable_docs!()
+    disable_docs!()
 
-Turn the `?`-documentation integration off/on. Disable before registering
-contracts in a statically compiled (juliac `--trim`) binary that runs
-`@contract`/`@invariants` from `__init__`, so `Markdown`/`Base.Docs` are not
-pulled into the runtime image. Has no effect on `check_contract`, `satisfies`,
+Turn off the `?`-documentation integration. Call before registering contracts
+in a statically compiled (juliac `--trim`) binary that runs `@contract` /
+`@invariants` from `__init__`, so `Markdown` / `Base.Docs` are not pulled into
+the runtime image. Has no effect on `check_contract`, `satisfies`,
 `interface_trait`, or `describe`.
+
+See also [`enable_docs!`](@ref).
 """
 disable_docs!() = (_DOCS_ENABLED[] = false; nothing)
+
+"""
+    enable_docs!()
+
+Re-enable `?`-documentation integration after a call to [`disable_docs!`](@ref).
+"""
 enable_docs!()  = (_DOCS_ENABLED[] = true;  nothing)
 
 # ── Internal ──────────────────────────────────────────────────────────
