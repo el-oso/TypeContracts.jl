@@ -232,6 +232,65 @@ module VerifyAllChain
 end
 
 # ══════════════════════════════════════════════════════════════════════
+# Fixtures for return type enforcement tests
+# ══════════════════════════════════════════════════════════════════════
+
+abstract type AbstractMeasurable end
+function tmeasure end
+
+@contract AbstractMeasurable begin
+    tmeasure(::Self) :: Float64
+end
+
+struct TGoodMeasurable <: AbstractMeasurable end
+tmeasure(::TGoodMeasurable) = 1.0                    # correct return type
+
+struct TBadMeasurable <: AbstractMeasurable end
+tmeasure(::TBadMeasurable) = "wrong"                 # returns String, not Float64
+
+struct TUnstableMeasurable <: AbstractMeasurable end
+tmeasure(x::TUnstableMeasurable) = rand() > 0.5 ? 1.0 : "oops"  # type-unstable
+
+abstract type AbstractUnannotated end
+function tunann end
+
+@contract AbstractUnannotated begin
+    tunann(::Self)
+end
+
+struct TUnann <: AbstractUnannotated end
+tunann(::TUnann) = "anything"                        # no return type declared → passes
+
+# ── Fixtures for parametric contract tests ────────────────────────────
+
+abstract type AbstractBucket{T} end
+function bget end
+function bset! end
+function blen end
+
+@contract AbstractBucket{T} begin
+    bget(::Self, ::Int) :: T
+    bset!(::Self, ::T, ::Int)
+    blen(::Self) :: Int
+end
+
+struct IntBucket <: AbstractBucket{Int}
+    data::Vector{Int}
+end
+
+bget(b::IntBucket, i::Int)::Int       = b.data[i]
+bset!(b::IntBucket, v::Int, i::Int)   = (b.data[i] = v)
+blen(b::IntBucket)::Int               = length(b.data)
+
+struct WrongBucket <: AbstractBucket{Int}
+    data::Vector{Int}
+end
+
+bget(b::WrongBucket, i::Int)::String  = "wrong"     # wrong return type
+bset!(b::WrongBucket, v::Int, i::Int) = (b.data[i] = v)
+blen(b::WrongBucket)::Int             = length(b.data)
+
+# ══════════════════════════════════════════════════════════════════════
 # Tests
 # ══════════════════════════════════════════════════════════════════════
 
@@ -592,6 +651,149 @@ end
         @testset "handles abstract intermediate types" begin
             @test VerifyAllChain._result.passed
             @test length(VerifyAllChain._result.types) == 1
+        end
+    end
+
+    # ── Return Type Enforcement ───────────────────────────────────────
+
+    @testset "Return type enforcement" begin
+
+        @testset "correct return type passes" begin
+            @test check_contract(TGoodMeasurable).passed
+        end
+
+        @testset "wrong return type throws InterfaceError" begin
+            err = try check_contract(TBadMeasurable); nothing catch e; e end
+            @test err isa InterfaceError
+            @test occursin("return", err.msg)
+            @test occursin("String", err.msg) || occursin("⊄", err.msg)
+        end
+
+        @testset "satisfies reports wrong return type as missing" begin
+            result = satisfies(TBadMeasurable, AbstractMeasurable)
+            @test !result.satisfied
+            @test any(m -> occursin("return", m), result.missing_methods)
+        end
+
+        @testset "type-unstable method flagged" begin
+            err = try check_contract(TUnstableMeasurable); nothing catch e; e end
+            @test err isa InterfaceError
+        end
+
+        @testset "no annotation skips return type check" begin
+            @test check_contract(TUnann).passed
+        end
+
+        @testset "@verify propagates return type check" begin
+            threw = try
+                @eval module VerifyReturnTypeFail
+                    using TypeContracts
+
+                    abstract type AbstractCounter2 end
+                    function tcount2 end
+
+                    @contract AbstractCounter2 begin
+                        tcount2(::Self) :: Int
+                    end
+
+                    struct BadCounter2 <: AbstractCounter2 end
+                    tcount2(::BadCounter2) = "not an int"
+
+                    @verify BadCounter2
+                end
+                false
+            catch
+                true
+            end
+            @test threw
+        end
+    end
+
+    # ── Parametric Contracts ──────────────────────────────────────────
+
+    @testset "Parametric contracts" begin
+
+        @testset "_extract_param resolves type parameters" begin
+            ref_T = TypeParamRef(AbstractArray, 1)
+            ref_N = TypeParamRef(AbstractArray, 2)
+
+            @test TypeContracts._extract_param(Vector{Float64}, ref_T) == Float64
+            @test TypeContracts._extract_param(Vector{Float64}, ref_N) == 1
+            @test TypeContracts._extract_param(Matrix{Int}, ref_T)     == Int
+            @test TypeContracts._extract_param(Matrix{Int}, ref_N)     == 2
+        end
+
+        @testset "_extract_param returns Any for unrelated type" begin
+            ref = TypeParamRef(AbstractArray, 1)
+            @test TypeContracts._extract_param(String, ref) === Any
+        end
+
+        @testset "conforming parametric type passes" begin
+            @test check_contract(IntBucket).passed
+        end
+
+        @testset "wrong element return type is caught" begin
+            err = try check_contract(WrongBucket); nothing catch e; e end
+            @test err isa InterfaceError
+            @test occursin("bget", err.msg)
+        end
+
+        @testset "TypeParamRef stored in arg_types" begin
+            specs = list_contract(AbstractBucket)
+            bset_spec = first(filter(s -> occursin("bset!", s.description), specs))
+            # second arg of bset! should be a TypeParamRef for T (param index 1)
+            @test bset_spec.arg_types[2] isa TypeParamRef
+            @test bset_spec.arg_types[2].param_index == 1
+        end
+
+        @testset "TypeParamRef stored in return_type_spec" begin
+            specs = list_contract(AbstractBucket)
+            bget_spec = first(filter(s -> occursin("bget", s.description), specs))
+            @test bget_spec.return_type_spec isa TypeParamRef
+            @test bget_spec.return_type_spec.param_index == 1
+            @test bget_spec.return_type == Any  # display field is Any for parametric
+        end
+
+        @testset "description shows type variable symbol" begin
+            specs = list_contract(AbstractBucket)
+            bget_spec = first(filter(s -> occursin("bget", s.description), specs))
+            @test occursin("T", bget_spec.description)
+        end
+
+        @testset "non-parametric contract header still works" begin
+            # existing contracts declared without {T} header are unaffected
+            specs = list_contract(AbstractShape)
+            @test length(specs) == 4
+            @test all(s -> !(s.return_type_spec isa TypeParamRef), specs)
+        end
+
+        @testset "@verify_all on parametric type" begin
+            threw = try
+                @eval module VerifyParamFail
+                    using TypeContracts
+
+                    abstract type AbstractStack{T} end
+                    function spush! end
+                    function spop! end
+
+                    @contract AbstractStack{T} begin
+                        spush!(::Self, ::T)
+                        spop!(::Self) :: T
+                    end
+
+                    struct IntStack <: AbstractStack{Int}
+                        data::Vector{Int}
+                    end
+                    spush!(s::IntStack, v::Int) = push!(s.data, v)
+                    spop!(s::IntStack)::String  = "oops"  # wrong return type
+
+                    @verify_all
+                end
+                false
+            catch
+                true
+            end
+            @test threw
         end
     end
 
