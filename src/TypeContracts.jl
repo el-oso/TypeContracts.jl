@@ -168,11 +168,14 @@ the parameterisation of `ref.abstract_base` and returning parameter at
 function _extract_param(concrete_type::Type, ref::TypeParamRef)
     # Unwrap all UnionAll layers to reach the DataType (e.g. AbstractArray{T,N}
     # is UnionAll{T, UnionAll{N, DataType}}, so two unwraps are needed).
+    # UnionAll.body::Any erases the type across the loop, so we assert DataType
+    # explicitly after the || guard for JET / juliac trim inference.
     base = ref.abstract_base
     while base isa UnionAll
         base = base.body
     end
-    base_name = base.name
+    base isa DataType || return Any
+    base_name = (base::DataType).name
     for S in supertypes(concrete_type)
         S isa DataType || continue
         S.name === base_name || continue
@@ -338,7 +341,16 @@ end
 Check if `T` satisfies the mandatory contract for `I` (method existence only).
 Returns a singleton trait type suitable for dispatch.
 
-Juliac-compatible: uses only `hasmethod`, no type inferencer.
+Trim/juliac-compatible: implemented as a `@generated` function. Both `I` and `T`
+are known at specialization time, so the contract is looked up in the registry
+*during code generation* and the body emitted as a fixed conjunction of concrete
+`hasmethod(f, Tuple{…})` calls — no runtime registry lookup, no abstractly-typed
+`Function`, no dynamically-built signature. The result is statically resolvable
+and passes `juliac --trim` verification.
+
+Because the contract is baked in at the first call for a given `(I, T)` pair,
+register contracts before querying them — the standard usage (contracts declared
+at module load, checked afterward).
 
 # Example
 ```julia
@@ -347,17 +359,20 @@ _process(::Implemented{AbstractShape}, x) = area(x)
 _process(::NotImplemented{AbstractShape}, x) = error("not a shape")
 ```
 """
-function interface_trait(::Type{I}, ::Type{T}) where {I, T}
+@generated function interface_trait(::Type{I}, ::Type{T}) where {I, T}
     specs = get(_registry, _registry_key(I), nothing)
-    isnothing(specs) && return NotImplemented{I}()
+    isnothing(specs) && return :(NotImplemented{I}())
 
+    checks = Expr[]
     for spec in specs
         spec.optional && continue
-        sig = _build_sig(spec.arg_types, T)
-        hasmethod(spec.f, sig) || return NotImplemented{I}()
+        sig = _build_sig(spec.arg_types, T)        # concrete Tuple type, built now
+        push!(checks, :(hasmethod($(spec.f), $sig)))
     end
+    isempty(checks) && return :(Implemented{I}())
 
-    Implemented{I}()
+    cond = foldl((a, b) -> :($a && $b), checks)
+    :($cond ? Implemented{I}() : NotImplemented{I}())
 end
 
 # ── Public API: Behavioral Testing ────────────────────────────────────
