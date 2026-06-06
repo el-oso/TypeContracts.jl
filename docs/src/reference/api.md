@@ -43,13 +43,6 @@ TypeContracts.describe(::Type{T}; io::IO) where T
 TypeContracts.describe(::Type{T}, ::Val{:all}; io::IO) where T
 ```
 
-## Documentation control
-
-```@docs
-TypeContracts.disable_docs!
-TypeContracts.enable_docs!
-```
-
 ## Types
 
 ```@docs
