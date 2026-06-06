@@ -4,7 +4,9 @@ TypeContracts folds contract information into Julia's native `?`-help system via
 
 ## How it works
 
-`@contract` and `@invariants` call `_attach_contract_doc(T)` internally. This renders a Markdown section and registers it under a sentinel signature `Tuple{Val{:TypeContractsContract}}`. Julia's REPL helpmode aggregates all docstring entries for a binding, so `?T` shows:
+The Markdown rendering lives in a **package extension** (`TypeContractsREPLExt`) that is loaded automatically when Julia's `REPL` package is present — i.e., in every interactive session. In scripts and juliac-compiled binaries, `REPL` is absent, the extension never loads, and no Markdown machinery is ever pulled into the binary. No manual opt-out is required.
+
+When the extension is active, `@contract` and `@invariants` attach a contract section under a sentinel signature `Tuple{Val{:TypeContractsContract}}`. Julia's REPL helpmode aggregates all docstring entries for a binding, so `?T` shows:
 
 1. The type's own docstring (from `Base` or the owning module).
 2. A **TypeContracts Interface** section appended below a separator rule.
@@ -69,30 +71,14 @@ end
 
 ## juliac / static compilation
 
-The documentation machinery (`Markdown`, `Base.Docs`, `Base.Docs.meta`) is load-time-only and not safe to use in a juliac-compiled binary at runtime. TypeContracts guards against this with a master switch:
+No manual steps are required. The doc-attachment code lives entirely in the REPL extension. Because `REPL` is not included in juliac-compiled binaries, the extension never activates and `Markdown`/`Base.Docs` are never pulled into the binary.
 
-```julia
-disable_docs!()   # set _DOCS_ENABLED[] = false
-enable_docs!()    # restore
-```
-
-In a static binary that registers contracts from `__init__`, call `disable_docs!()` first:
-
-```julia
-function __init__()
-    TypeContracts.disable_docs!()
-    @contract AbstractShape begin
-        area(::Self) :: Float64
-    end
-end
-```
-
-When `disable_docs!()` is active, `@contract` and `@invariants` still register contracts in the structural registry — only the `?`-documentation attachment is skipped.
-
-## The runtime path is always doc-free
-
-[`interface_trait`](@ref), [`check_contract`](@ref), and [`satisfies`](@ref) never touch `Markdown` or `Base.Docs`, regardless of the `_DOCS_ENABLED` flag. They are safe in any context.
+The structural runtime path — [`interface_trait`](@ref), [`check_contract`](@ref), [`satisfies`](@ref) — never touches Markdown or Base.Docs in any context. They call only `hasmethod` and `Base.return_types`.
 
 ## `@invariants` updates the doc section
 
-When `@invariants` is called after `@contract` on the same type, the contract doc section is refreshed to include both method specs and behavioral invariants. The prior entry under the sentinel signature is deleted first (before re-registering), so no "Replacing docs" warning is emitted.
+When `@invariants` is called after `@contract` on the same type, the contract doc section is refreshed to include both method specs and behavioral invariants. The prior entry under the sentinel signature is deleted first, so no "Replacing docs" warning is emitted.
+
+## Precompiled packages
+
+When a package that uses TypeContracts is precompiled, `@contract` and `@invariants` run at precompile time and populate the registries. The extension is not present at precompile time, so no doc attachment happens then. When a user `using`s the package in an interactive session, the extension loads and retroactively attaches docs for all registered contracts in its `__init__`. The docs are always up-to-date for the entire interactive session.
