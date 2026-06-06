@@ -6,7 +6,7 @@ export @contract, @verify, @verify_all, @invariants,
        check_contract, satisfies, list_contract, registered_contracts,
        test_behavior, list_behaviors, registered_behaviors,
        describe, interface_trait,
-       Self, InterfaceError, MethodSpec, BehaviorSpec,
+       Self, TypeParamRef, InterfaceError, MethodSpec, BehaviorSpec,
        Implemented, NotImplemented
 
 # ── Core Types ────────────────────────────────────────────────────────
@@ -21,6 +21,23 @@ with the actual type being checked.
 struct Self end
 
 Base.show(io::IO, ::Type{Self}) = print(io, "Self")
+
+"""
+    TypeParamRef
+
+Reference to a type parameter of a parametric abstract type.
+Used in `@contract AbstractType{T,N}` blocks to refer to `T` or `N`
+in method signatures and return types.
+
+At check time, resolved by extracting the corresponding parameter from
+the concrete type's supertype chain.
+
+Juliac-compatible: plain data struct, no closures.
+"""
+struct TypeParamRef
+    abstract_base::Any  # UnionAll or DataType (e.g. AbstractArray)
+    param_index::Int    # 1 = first type param (T), 2 = second (N), etc.
+end
 
 """
     InterfaceError <: Exception
@@ -40,15 +57,17 @@ A single method requirement within an interface contract.
 
 # Fields
 - `f::Function` — the function object
-- `arg_types::Vector{Type}` — argument types (`Self` used as placeholder)
-- `return_type::Type` — annotated return type (`Any` if unspecified)
+- `arg_types::Vector{Any}` — argument types (`Self`, `TypeParamRef`, or concrete `Type`)
+- `return_type::Type` — annotated return type for display (`Any` if unspecified or parametric)
+- `return_type_spec::Union{Type,TypeParamRef}` — used for actual return type checking
 - `description::String` — human-readable signature for error messages
 - `optional::Bool` — whether this method is optional
 """
 struct MethodSpec
     f::Function
-    arg_types::Vector{Type}
+    arg_types::Vector{Any}
     return_type::Type
+    return_type_spec::Union{Type, TypeParamRef}
     description::String
     optional::Bool
 end
@@ -97,11 +116,52 @@ registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
 
 # ── Internal ──────────────────────────────────────────────────────────
 
-function _build_sig(arg_types::Vector{Type}, T::Type)
+"""
+    _extract_param(concrete_type, ref::TypeParamRef) -> Type
+
+Resolve a `TypeParamRef` by walking `concrete_type`'s supertype chain to find
+the parameterisation of `ref.abstract_base` and returning parameter at
+`ref.param_index`. Returns `Any` if the chain does not contain the base.
+"""
+function _extract_param(concrete_type::Type, ref::TypeParamRef)
+    # Unwrap all UnionAll layers to reach the DataType (e.g. AbstractArray{T,N}
+    # is UnionAll{T, UnionAll{N, DataType}}, so two unwraps are needed).
+    base = ref.abstract_base
+    while base isa UnionAll
+        base = base.body
+    end
+    base_name = base.name
+    for S in supertypes(concrete_type)
+        S isa DataType || continue
+        S.name === base_name || continue
+        ref.param_index <= length(S.parameters) || return Any
+        return S.parameters[ref.param_index]
+    end
+    Any
+end
+
+function _resolve_rt_spec(concrete_type::Type, spec::MethodSpec)
+    spec.return_type_spec isa TypeParamRef ?
+        _extract_param(concrete_type, spec.return_type_spec) :
+        spec.return_type_spec
+end
+
+# For parameterized supertypes like AbstractBucket{Int}, return the UnionAll
+# wrapper (AbstractBucket) so it matches registry entries from
+# @contract AbstractBucket{T} begin ... end
+function _registry_key(S::Type)
+    S isa DataType && !isempty(S.parameters) && return S.name.wrapper
+    S
+end
+
+function _build_sig(arg_types::Vector{Any}, T::Type)
     n = length(arg_types)
     resolved = Vector{Type}(undef, n)
     @inbounds for i in 1:n
-        resolved[i] = arg_types[i] === Self ? T : arg_types[i]
+        at = arg_types[i]
+        resolved[i] = at === Self         ? T :
+                      at isa TypeParamRef ? _extract_param(T, at) :
+                      at
     end
     Tuple{resolved...}
 end
@@ -112,23 +172,38 @@ end
     check_contract(T::Type) -> NamedTuple{(:type, :contracts, :passed)}
 
 Verify that `T` satisfies all **mandatory** contracts for its supertype chain.
+Checks both method existence and declared return types (via Julia's type inferencer).
 Optional methods are skipped. Throws `InterfaceError` on failure.
 
-Place `@verify T` at module top level to run this during precompilation.
+This is a precompile-time tool. `Base.return_types` is called here and requires
+Julia's type inference machinery — use via `@verify` / `@verify_all` at module
+load time, not in Juliac-compiled binaries at runtime.
 """
 function check_contract(T::Type)
     errors  = String[]
     checked = Type[]
 
     for S in supertypes(T)
-        specs = get(_registry, S, nothing)
+        specs = get(_registry, _registry_key(S), nothing)
         isnothing(specs) && continue
-        push!(checked, S)
+        push!(checked, _registry_key(S))
         for spec in specs
             spec.optional && continue
             sig = _build_sig(spec.arg_types, T)
             if !hasmethod(spec.f, sig)
                 push!(errors, "  $(spec.description)  [required by $S]")
+            else
+                expected_rt = _resolve_rt_spec(T, spec)
+                if expected_rt !== Any
+                    inferred_rts = Base.return_types(spec.f, sig)
+                    inferred_rt  = isempty(inferred_rts) ? Union{} :
+                                   length(inferred_rts) == 1 ? inferred_rts[1] :
+                                   Union{inferred_rts...}
+                    if !(inferred_rt <: expected_rt)
+                        push!(errors,
+                            "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $S]")
+                    end
+                end
             end
         end
     end
@@ -136,7 +211,7 @@ function check_contract(T::Type)
     if !isempty(errors)
         throw(InterfaceError(
             "Type $T does not satisfy interface contract.\n" *
-            "Missing methods:\n" *
+            "Missing or incorrect methods:\n" *
             join(errors, "\n")
         ))
     end
@@ -148,10 +223,12 @@ end
     satisfies(T::Type, S::Type) -> NamedTuple
 
 Non-throwing check. Returns `(satisfied, missing_methods, missing_optional)`.
-`satisfied` is true when all mandatory methods are present.
+`satisfied` is true when all mandatory methods are present and return types match.
+
+Precompile-time tool — uses `Base.return_types` for return type checking.
 """
 function satisfies(T::Type, S::Type)
-    specs = get(_registry, S, nothing)
+    specs = get(_registry, _registry_key(S), nothing)
     isnothing(specs) && return (satisfied=true, missing_methods=String[], missing_optional=String[])
 
     missing_methods  = String[]
@@ -160,6 +237,18 @@ function satisfies(T::Type, S::Type)
         sig = _build_sig(spec.arg_types, T)
         if !hasmethod(spec.f, sig)
             push!(spec.optional ? missing_optional : missing_methods, spec.description)
+        elseif !spec.optional
+            expected_rt = _resolve_rt_spec(T, spec)
+            if expected_rt !== Any
+                inferred_rts = Base.return_types(spec.f, sig)
+                inferred_rt  = isempty(inferred_rts) ? Union{} :
+                               length(inferred_rts) == 1 ? inferred_rts[1] :
+                               Union{inferred_rts...}
+                if !(inferred_rt <: expected_rt)
+                    push!(missing_methods,
+                        "$(spec.description) [return: $(inferred_rt) ⊄ $(expected_rt)]")
+                end
+            end
         end
     end
 
@@ -183,8 +272,9 @@ Return all contracts applicable to `T` via its supertype chain.
 function list_contract(T::Type, ::Val{:all})::Dict{Type, Vector{MethodSpec}}
     result = Dict{Type, Vector{MethodSpec}}()
     for S in supertypes(T)
-        specs = get(_registry, S, nothing)
-        !isnothing(specs) && (result[S] = specs)
+        key   = _registry_key(S)
+        specs = get(_registry, key, nothing)
+        !isnothing(specs) && (result[key] = specs)
     end
     result
 end
@@ -203,8 +293,10 @@ end
 """
     interface_trait(::Type{I}, ::Type{T}) -> Implemented{I} | NotImplemented{I}
 
-Check if `T` satisfies the mandatory contract for `I`.
+Check if `T` satisfies the mandatory contract for `I` (method existence only).
 Returns a singleton trait type suitable for dispatch.
+
+Juliac-compatible: uses only `hasmethod`, no type inferencer.
 
 # Example
 ```julia
@@ -214,7 +306,7 @@ _process(::NotImplemented{AbstractShape}, x) = error("not a shape")
 ```
 """
 function interface_trait(::Type{I}, ::Type{T}) where {I, T}
-    specs = get(_registry, I, nothing)
+    specs = get(_registry, _registry_key(I), nothing)
     isnothing(specs) && return NotImplemented{I}()
 
     for spec in specs
@@ -241,7 +333,7 @@ function test_behavior(::Type{T}, objects) where {T}
                          Tuple{Type, String, Bool, Bool, String}}[]
 
     for S in supertypes(T)
-        behaviors = get(_behaviors, S, nothing)
+        behaviors = get(_behaviors, _registry_key(S), nothing)
         isnothing(behaviors) && continue
         _run_behaviors!(results, S, behaviors, objects)
     end
@@ -295,7 +387,7 @@ function describe(::Type{T}; io::IO=stdout) where {T}
     println(io, "Interface contract for $T")
     println(io, "─" ^ 40)
 
-    specs = get(_registry, T, nothing)
+    specs     = get(_registry, T, nothing)
     behaviors = get(_behaviors, T, nothing)
 
     if isnothing(specs) && isnothing(behaviors)
@@ -353,8 +445,9 @@ function describe(::Type{T}, ::Val{:all}; io::IO=stdout) where {T}
 
     found = false
     for S in supertypes(T)
-        specs     = get(_registry, S, nothing)
-        behaviors = get(_behaviors, S, nothing)
+        key       = _registry_key(S)
+        specs     = get(_registry, key, nothing)
+        behaviors = get(_behaviors, key, nothing)
         (isnothing(specs) && isnothing(behaviors)) && continue
         found = true
 
@@ -394,34 +487,52 @@ end
         method3(::Self)
     end
 
-Register a method contract for a type. Methods before `:optional` are
-mandatory (enforced by `@verify`). Methods after `:optional` are recorded
-but not enforced at compile time.
+    @contract AbstractType{T,N} begin
+        method1(::Self, ::Int) :: T
+        method2(::Self, ::T, ::Int)
+    end
 
-Functions must be in scope when `@contract` is evaluated. For new functions,
-declare them first with `function name end`.
+Register a method contract for a type. Type parameters (`T`, `N`, …) declared
+in the header can be used anywhere in the method signatures — they are resolved
+at check time from the concrete type's supertype chain.
+
+Methods before `:optional` are mandatory (enforced by `@verify`).
+Methods after `:optional` are recorded but not enforced at compile time.
+
+Functions must be in scope when `@contract` is evaluated.
 """
-macro contract(T, block)
+macro contract(T_expr, block)
     block isa Expr && block.head == :block ||
         error("@contract requires a begin...end block")
+
+    abstract_sym, type_vars = _parse_contract_header(T_expr)
 
     parsed     = _parse_block(block)
     spec_exprs = Expr[]
 
     for (fname, atypes, rtype, opt) in parsed
-        aexprs = Any[_self_or_esc(t) for t in atypes]
-        rexpr  = rtype === :Any ? :(Any) : esc(rtype)
-        desc   = _fmt(fname, atypes, rtype)
+        aexprs = Any[_resolve_arg_expr(t, type_vars, abstract_sym) for t in atypes]
+
+        rtype_display_expr, rtype_spec_expr = _resolve_rtype_exprs(rtype, type_vars, abstract_sym)
+
+        desc = _fmt(fname, atypes, rtype)
 
         push!(spec_exprs, :(
-            TypeContracts.MethodSpec($(esc(fname)), Type[$(aexprs...)], $rexpr, $desc, $opt)
+            TypeContracts.MethodSpec(
+                $(esc(fname)),
+                Any[$(aexprs...)],
+                $rtype_display_expr,
+                $rtype_spec_expr,
+                $desc,
+                $opt
+            )
         ))
     end
 
     quote
-        isabstracttype($(esc(T))) ||
-            error("@contract requires an abstract type, got $($(esc(T)))")
-        TypeContracts._registry[$(esc(T))] = TypeContracts.MethodSpec[$(spec_exprs...)]
+        isabstracttype($(esc(abstract_sym))) ||
+            error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
+        TypeContracts._registry[$(esc(abstract_sym))] = TypeContracts.MethodSpec[$(spec_exprs...)]
         nothing
     end
 end
@@ -430,7 +541,8 @@ end
     @verify ConcreteType
 
 Assert at module-load / precompile time that `ConcreteType` satisfies all
-mandatory contracts for its supertype chain. Optional methods are not checked.
+mandatory contracts for its supertype chain. Checks both method existence
+and declared return types.
 
 Must be placed after all method definitions for the type.
 """
@@ -545,7 +657,47 @@ macro invariants(T, block)
     end
 end
 
-# ── Macro internals (called at macro-expansion time) ──────────────────
+# ── Macro internals ───────────────────────────────────────────────────
+
+function _parse_contract_header(expr)
+    if expr isa Symbol
+        return expr, Dict{Symbol,Int}()
+    elseif expr isa Expr && expr.head == :curly
+        abstract_sym = expr.args[1]
+        abstract_sym isa Symbol ||
+            error("@contract: abstract type name must be a symbol, got $abstract_sym")
+        type_vars = Dict{Symbol,Int}()
+        for (i, tv) in enumerate(expr.args[2:end])
+            tv isa Symbol ||
+                error("@contract: type parameter must be a plain symbol, got $tv")
+            type_vars[tv] = i
+        end
+        return abstract_sym, type_vars
+    else
+        error("@contract expects AbstractType or AbstractType{T,...}, got: $expr")
+    end
+end
+
+function _resolve_arg_expr(t, type_vars::Dict{Symbol,Int}, abstract_sym::Symbol)
+    t isa Symbol && t === :Self && return :(TypeContracts.Self)
+    if t isa Symbol && haskey(type_vars, t)
+        idx = type_vars[t]
+        return :(TypeContracts.TypeParamRef($(esc(abstract_sym)), $idx))
+    end
+    esc(t)
+end
+
+function _resolve_rtype_exprs(rtype, type_vars::Dict{Symbol,Int}, abstract_sym::Symbol)
+    if rtype === :Any
+        return :(Any), :(Any)
+    elseif rtype isa Symbol && haskey(type_vars, rtype)
+        idx = type_vars[rtype]
+        return :(Any), :(TypeContracts.TypeParamRef($(esc(abstract_sym)), $idx))
+    else
+        e = esc(rtype)
+        return e, e
+    end
+end
 
 function _parse_block(block::Expr)
     specs = Tuple{Any, Vector{Any}, Any, Bool}[]
@@ -584,10 +736,6 @@ function _arg_type(arg)
     arg isa Expr && arg.head == :(::) ||
         error("Expected typed argument (::T or name::T), got: $(arg)")
     length(arg.args) == 1 ? arg.args[1] : arg.args[2]
-end
-
-function _self_or_esc(t)
-    (t isa Symbol && t == :Self) ? :(TypeContracts.Self) : esc(t)
 end
 
 function _fmt(fname, atypes, rtype)
