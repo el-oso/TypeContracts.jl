@@ -1,11 +1,12 @@
 module TypeContracts
 
 using InteractiveUtils: supertypes, subtypes
+using Markdown: Markdown
 
 export @contract, @verify, @verify_all, @invariants,
        check_contract, satisfies, list_contract, registered_contracts,
        test_behavior, list_behaviors, registered_behaviors,
-       describe, interface_trait,
+       describe, interface_trait, disable_docs!, enable_docs!,
        Self, TypeParamRef, InterfaceError, MethodSpec, BehaviorSpec,
        Implemented, NotImplemented
 
@@ -62,6 +63,7 @@ A single method requirement within an interface contract.
 - `return_type_spec::Union{Type,TypeParamRef}` — used for actual return type checking
 - `description::String` — human-readable signature for error messages
 - `optional::Bool` — whether this method is optional
+- `doc::String` — optional prose description (`""` if none); shown in `?`-docs and `describe`
 """
 struct MethodSpec
     f::Function
@@ -70,6 +72,7 @@ struct MethodSpec
     return_type_spec::Union{Type, TypeParamRef}
     description::String
     optional::Bool
+    doc::String
 end
 
 function Base.show(io::IO, s::MethodSpec)
@@ -108,11 +111,30 @@ Base.show(io::IO, ::NotImplemented{I}) where {I} = print(io, "NotImplemented{$I}
 
 # ── Registries ────────────────────────────────────────────────────────
 
-const _registry  = Dict{Type, Vector{MethodSpec}}()
-const _behaviors = Dict{Type, Vector{BehaviorSpec}}()
+const _registry     = Dict{Type, Vector{MethodSpec}}()
+const _behaviors    = Dict{Type, Vector{BehaviorSpec}}()
+const _descriptions = Dict{Type, String}()   # interface-level prose
 
 registered_contracts()::Dict{Type, Vector{MethodSpec}}   = copy(_registry)
 registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
+
+# Master switch for `?`-doc integration. Set to `false` (via `disable_docs!()`)
+# before registering contracts in a juliac/`--trim` static-compilation context,
+# so the `Markdown` + `Base.Docs` machinery is never entered at runtime. The
+# structural/runtime path (`interface_trait`) does not touch this regardless.
+const _DOCS_ENABLED = Ref(true)
+
+"""
+    disable_docs!()  /  enable_docs!()
+
+Turn the `?`-documentation integration off/on. Disable before registering
+contracts in a statically compiled (juliac `--trim`) binary that runs
+`@contract`/`@invariants` from `__init__`, so `Markdown`/`Base.Docs` are not
+pulled into the runtime image. Has no effect on `check_contract`, `satisfies`,
+`interface_trait`, or `describe`.
+"""
+disable_docs!() = (_DOCS_ENABLED[] = false; nothing)
+enable_docs!()  = (_DOCS_ENABLED[] = true;  nothing)
 
 # ── Internal ──────────────────────────────────────────────────────────
 
@@ -389,11 +411,14 @@ function describe(::Type{T}; io::IO=stdout) where {T}
 
     specs     = get(_registry, T, nothing)
     behaviors = get(_behaviors, T, nothing)
+    desc      = get(_descriptions, T, "")
 
     if isnothing(specs) && isnothing(behaviors)
         println(io, "  (no contract registered)")
         return nothing
     end
+
+    isempty(desc) || (println(io, "  ", desc); println(io))
 
     if !isnothing(specs)
         mandatory = filter(s -> !s.optional, specs)
@@ -402,13 +427,13 @@ function describe(::Type{T}; io::IO=stdout) where {T}
         if !isempty(mandatory)
             println(io, "  Mandatory methods:")
             for s in mandatory
-                println(io, "    ", s.description)
+                println(io, "    ", _method_line(s))
             end
         end
         if !isempty(optional)
             println(io, "  Optional methods:")
             for s in optional
-                println(io, "    ", s.description)
+                println(io, "    ", _method_line(s))
             end
         end
     end
@@ -477,6 +502,115 @@ function describe(::Type{T}, ::Val{:all}; io::IO=stdout) where {T}
     nothing
 end
 
+# ── Documentation integration ─────────────────────────────────────────
+# Renders a contract to Markdown and attaches it to the target type's `?`-docs.
+# A distinct sentinel signature lets our section coexist with any docstring the
+# user (or Base) already wrote — `?T` shows both, separated by a rule. This
+# works uniformly for owned types and retroactive contracts on foreign types.
+
+const _DOC_SIG = Tuple{Val{:TypeContractsContract}}
+
+"""
+    _contract_markdown(T::Type) -> Markdown.MD
+
+Build the `?`-visible contract section for `T` from the registered prose
+description, method specs, and behavioral invariants.
+"""
+function _contract_markdown(::Type{T}) where {T}
+    io = IOBuffer()
+    println(io, "# TypeContracts Interface")
+    println(io)
+
+    desc = get(_descriptions, T, "")
+    if !isempty(desc)
+        println(io, desc)
+        println(io)
+    end
+
+    specs = get(_registry, T, nothing)
+    if !isnothing(specs)
+        mandatory = filter(s -> !s.optional, specs)
+        optional  = filter(s -> s.optional, specs)
+        _md_method_block(io, "Mandatory methods", mandatory)
+        _md_method_block(io, "Optional methods", optional)
+    end
+
+    behaviors = get(_behaviors, T, nothing)
+    if !isnothing(behaviors)
+        mandatory_b = filter(b -> !b.optional, behaviors)
+        optional_b  = filter(b -> b.optional, behaviors)
+        _md_behavior_block(io, "Behavioral invariants", mandatory_b)
+        _md_behavior_block(io, "Optional invariants", optional_b)
+    end
+
+    Markdown.parse(String(take!(io)))
+end
+
+# Plain-text method line for `describe`: "sig — doc" when prose is present.
+function _method_line(s::MethodSpec)
+    isempty(s.doc) ? s.description : string(s.description, " — ", s.doc)
+end
+
+function _md_method_block(io, title, specs)
+    isempty(specs) && return
+    println(io, "**", title, "**")
+    println(io)
+    for s in specs
+        line = "  - `" * s.description * "`"
+        isempty(s.doc) || (line *= " — " * s.doc)
+        println(io, line)
+    end
+    println(io)
+    return
+end
+
+function _md_behavior_block(io, title, behaviors)
+    isempty(behaviors) && return
+    println(io, "**", title, "**")
+    println(io)
+    for b in behaviors
+        println(io, "  - ", b.description)
+    end
+    println(io)
+    return
+end
+
+"""
+    _attach_contract_doc(T::Type)
+
+Attach (or refresh) the contract's Markdown section to `T`'s documentation,
+making it visible via `?T`. Called from `@contract` and `@invariants` so the
+doc always reflects the latest registered state.
+
+Load-time only — never reached from the `interface_trait` runtime path. A no-op
+when `_DOCS_ENABLED[]` is false, and any failure is swallowed so a stripped doc
+system can never break module loading or a compiled binary.
+"""
+function _attach_contract_doc(::Type{T}) where {T}
+    _DOCS_ENABLED[] || return nothing
+    try
+        md      = _contract_markdown(T)
+        mod     = parentmodule(T)
+        binding = Base.Docs.Binding(mod, nameof(T))
+        # Drop any prior contract entry under our sentinel signature first, so
+        # re-registration (e.g. @contract then @invariants) doesn't emit the
+        # "Replacing docs" warning. Leaves the user's/Base's own docstring intact.
+        metadict = Base.Docs.meta(mod)
+        if haskey(metadict, binding)
+            multidoc = metadict[binding]
+            if haskey(multidoc.docs, _DOC_SIG)
+                delete!(multidoc.docs, _DOC_SIG)
+                filter!(!=(_DOC_SIG), multidoc.order)
+            end
+        end
+        docstr = Base.Docs.docstr(md, Dict{Symbol,Any}(:module => mod, :path => nothing, :linenumber => 0))
+        Base.Docs.doc!(mod, binding, docstr, _DOC_SIG)
+    catch
+        # Documentation is best-effort; never fatal.
+    end
+    nothing
+end
+
 # ── Macros ────────────────────────────────────────────────────────────
 
 """
@@ -500,8 +634,35 @@ Methods before `:optional` are mandatory (enforced by `@verify`).
 Methods after `:optional` are recorded but not enforced at compile time.
 
 Functions must be in scope when `@contract` is evaluated.
+
+# Documentation
+
+An optional interface description and per-method descriptions are folded into the
+type's `?`-visible documentation (and `describe`). They work for owned types and
+for retroactive contracts on foreign types (e.g. `Base.AbstractArray`):
+
+```julia
+@contract AbstractShape "A 2-D geometric shape." begin
+    area(::Self)::Float64      => "area enclosed by the shape"
+    perimeter(::Self)::Float64 => "length of the boundary"
+    :optional
+    name(::Self)::String       => "human-readable name"
+end
+```
+
+`?AbstractShape` then shows the contract section alongside any existing docstring.
 """
 macro contract(T_expr, block)
+    _build_contract_expr(T_expr, "", block)
+end
+
+macro contract(T_expr, desc, block)
+    desc isa String ||
+        error("@contract: interface description must be a string literal, got: $desc")
+    _build_contract_expr(T_expr, desc, block)
+end
+
+function _build_contract_expr(T_expr, desc::String, block)
     block isa Expr && block.head == :block ||
         error("@contract requires a begin...end block")
 
@@ -510,12 +671,12 @@ macro contract(T_expr, block)
     parsed     = _parse_block(block)
     spec_exprs = Expr[]
 
-    for (fname, atypes, rtype, opt) in parsed
+    for (fname, atypes, rtype, opt, mdoc) in parsed
         aexprs = Any[_resolve_arg_expr(t, type_vars, abstract_sym) for t in atypes]
 
         rtype_display_expr, rtype_spec_expr = _resolve_rtype_exprs(rtype, type_vars, abstract_sym)
 
-        desc = _fmt(fname, atypes, rtype)
+        sigdesc = _fmt(fname, atypes, rtype)
 
         push!(spec_exprs, :(
             TypeContracts.MethodSpec(
@@ -523,8 +684,9 @@ macro contract(T_expr, block)
                 Any[$(aexprs...)],
                 $rtype_display_expr,
                 $rtype_spec_expr,
-                $desc,
-                $opt
+                $sigdesc,
+                $opt,
+                $mdoc
             )
         ))
     end
@@ -533,6 +695,8 @@ macro contract(T_expr, block)
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
         TypeContracts._registry[$(esc(abstract_sym))] = TypeContracts.MethodSpec[$(spec_exprs...)]
+        TypeContracts._descriptions[$(esc(abstract_sym))] = $desc
+        TypeContracts._attach_contract_doc($(esc(abstract_sym)))
         nothing
     end
 end
@@ -653,6 +817,7 @@ macro invariants(T, block)
 
     quote
         TypeContracts._behaviors[$(esc(T))] = TypeContracts.BehaviorSpec[$(spec_exprs...)]
+        TypeContracts._attach_contract_doc($(esc(T)))
         nothing
     end
 end
@@ -700,7 +865,7 @@ function _resolve_rtype_exprs(rtype, type_vars::Dict{Symbol,Int}, abstract_sym::
 end
 
 function _parse_block(block::Expr)
-    specs = Tuple{Any, Vector{Any}, Any, Bool}[]
+    specs = Tuple{Any, Vector{Any}, Any, Bool, String}[]
     is_optional = false
     for ex in block.args
         ex isa LineNumberNode && continue
@@ -708,7 +873,19 @@ function _parse_block(block::Expr)
             is_optional = true
             continue
         end
-        push!(specs, (_parse_sig(ex)..., is_optional))
+        # Optional per-method prose: `signature => "description"`.
+        # `::` binds tighter than `=>`, so `f(::Self)::T => "doc"` parses as
+        # Pair(signature_with_rettype, "doc") — signature parsing is untouched.
+        sig_ex = ex
+        mdoc   = ""
+        if ex isa Expr && ex.head == :call && length(ex.args) >= 3 && ex.args[1] === :(=>)
+            rhs = ex.args[3]
+            rhs isa String ||
+                error("@contract: method description must be a string literal, got: $rhs")
+            mdoc   = rhs
+            sig_ex = ex.args[2]
+        end
+        push!(specs, (_parse_sig(sig_ex)..., is_optional, mdoc))
     end
     specs
 end
