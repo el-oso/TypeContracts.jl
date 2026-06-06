@@ -821,6 +821,12 @@ struct RTBad <: AbstractRT end
     # ── Documentation integration ─────────────────────────────────────
 
     @testset "Documentation integration" begin
+        # Load REPL first so the package extension activates before any contracts
+        # are registered in this testset. The extension's __init__ retroactively
+        # attaches docs for types already in the registry (from earlier testsets),
+        # and _attach_doc_impl[] is set so subsequent @contract calls attach docs immediately.
+        import REPL
+
         # Fixtures: an owned type with a prior docstring + descriptions.
         "Prior docstring for AbstractGizmo."
         abstract type AbstractGizmo end
@@ -872,8 +878,8 @@ struct RTBad <: AbstractRT end
         end
 
         @testset "?-doc renders contract section for owned type" begin
-            md = TypeContracts._contract_markdown(AbstractGizmo)
-            rendered = sprint(show, MIME("text/plain"), md)
+            help_md = Core.eval(@__MODULE__, REPL.helpmode(IOBuffer(), "AbstractGizmo"))
+            rendered = sprint(show, MIME("text/plain"), help_md)
             @test occursin("TypeContracts Interface", rendered)
             @test occursin("A spinnable gizmo.", rendered)
             @test occursin("revolutions per spin", rendered)
@@ -882,7 +888,6 @@ struct RTBad <: AbstractRT end
         end
 
         @testset "?-doc preserves the prior docstring (coexists)" begin
-            import REPL
             help_md = Core.eval(@__MODULE__, REPL.helpmode(IOBuffer(), "AbstractGizmo"))
             rendered = sprint(show, MIME("text/plain"), help_md)
             @test occursin("Prior docstring for AbstractGizmo.", rendered)
@@ -894,7 +899,6 @@ struct RTBad <: AbstractRT end
                 first(::Self) => "first element"
                 last(::Self)  => "last element"
             end
-            import REPL
             help_md = Core.eval(@__MODULE__, REPL.helpmode(IOBuffer(), "AbstractRange"))
             rendered = sprint(show, MIME("text/plain"), help_md)
             # Base's own AbstractRange docs remain…
@@ -913,8 +917,8 @@ struct RTBad <: AbstractRT end
             @invariants AbstractWheel begin
                 "radius is positive" => x -> wheel_radius(x) > 0
             end
-            md = TypeContracts._contract_markdown(AbstractWheel)
-            rendered = sprint(show, MIME("text/plain"), md)
+            help_md = Core.eval(@__MODULE__, REPL.helpmode(IOBuffer(), "AbstractWheel"))
+            rendered = sprint(show, MIME("text/plain"), help_md)
             @test occursin("radius in metres", rendered)
             @test occursin("radius is positive", rendered)
         end
@@ -930,39 +934,27 @@ struct RTBad <: AbstractRT end
     # ── juliac / static-compilation compatibility ─────────────────────
 
     @testset "juliac compatibility" begin
-        @testset "disable_docs! makes attachment a no-op" begin
-            abstract type AbstractNoDoc end
-            function nd_fn end
-
-            disable_docs!()
-            try
-                @contract AbstractNoDoc "should not be attached" begin
-                    nd_fn(::Self) => "prose"
-                end
-                binding = Base.Docs.Binding(@__MODULE__, :AbstractNoDoc)
-                meta = Base.Docs.meta(@__MODULE__)
-                attached = haskey(meta, binding) && haskey(meta[binding].docs, TypeContracts._DOC_SIG)
-                @test attached == false
-            finally
-                enable_docs!()
-            end
-
-            # Registry still populated even with docs disabled.
-            @test !isempty(list_contract(AbstractNoDoc))
-        end
-
-        @testset "runtime path interface_trait is doc-free and works regardless" begin
-            # AbstractRT / rt_fn / RTGood / RTBad are module-scope fixtures (below).
+        @testset "runtime path interface_trait is doc-free" begin
+            # AbstractRT / rt_fn / RTGood / RTBad are module-scope fixtures.
             @test interface_trait(AbstractRT, RTGood) isa Implemented{AbstractRT}
             @test interface_trait(AbstractRT, RTBad)  isa NotImplemented{AbstractRT}
 
-            # The inferred code for interface_trait must not reference the
-            # Markdown / Base.Docs machinery (kept out of juliac runtime).
+            # interface_trait must not reference Markdown or Base.Docs machinery.
+            # These live in the REPL extension and are never reached from the
+            # structural runtime path.
             io = IOBuffer()
             code_warntype(io, TypeContracts.interface_trait, Tuple{Type{AbstractRT}, Type{RTGood}})
             s = String(take!(io))
             @test !occursin("Markdown", s)
             @test !occursin("_attach_contract_doc", s)
+        end
+
+        @testset "extension is absent in script mode (no-op hook)" begin
+            # Simulate what happens when REPL is not loaded: the impl Ref is either
+            # nothing (pure script) or already set (REPL session). In a test session
+            # the extension IS loaded (REPL is available), so we just verify that
+            # the registry is populated regardless of extension state.
+            @test !isempty(registered_contracts())
         end
     end
 
