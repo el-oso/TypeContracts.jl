@@ -1,6 +1,8 @@
 using Test
 using TypeContracts
 using InteractiveUtils: code_warntype
+using JET: @test_opt
+import TrimCheck
 
 # ══════════════════════════════════════════════════════════════════════
 # Test fixtures — types and functions at module scope
@@ -957,5 +959,7 @@ struct RTBad <: AbstractRT end
             @test !isempty(registered_contracts())
         end
     end
+
+    include("trim_compat.jl")
 
 end
