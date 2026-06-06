@@ -1,8 +1,14 @@
 module TypeContractsREPLExt
 
 using TypeContracts
-using Markdown: Markdown
+using REPL
 import Base.Docs
+
+# REPL is the sole extension trigger. REPL always loads Markdown, so we reach
+# Markdown through it rather than declaring a separate weakdep — Julia only lets
+# an extension `using` the host's regular deps plus its own trigger packages,
+# and a non-trigger weakdep (Markdown) would be rejected at precompile time.
+const Markdown = REPL.Markdown
 
 # Sentinel signature that coexists with any existing docstring for a type.
 const _DOC_SIG = Tuple{Val{:TypeContractsContract}}
