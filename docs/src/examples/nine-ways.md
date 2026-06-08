@@ -255,7 +255,7 @@ If you forget any delegation method, you get a vague `MethodError` at the call s
 rather than a load-time diagnostic. There is nothing to diff against to know if the
 delegation is complete.
 
-### With TypeContracts
+### With TypeContracts — verify mode
 
 ```julia
 using TypeContracts, BaseTypeContracts
@@ -276,8 +276,54 @@ Base.setindex!(a::LoggedArray{T}, v, i::Int) where T = (a.data[i] = v)
 ```
 
 `@verify` at the bottom of the file turns delegation gaps from silent runtime
-surprises into loud load-time failures. `satisfies(LoggedArray{Int}, AbstractArray)`
-returns the exact list of what is and is not implemented.
+surprises into loud load-time failures.
+
+### With TypeContracts — `@delegate` (generate + verify)
+
+When a wrapper type exposes exactly the interface from a registered `@contract`,
+`@delegate` reads the contract and emits the forwarding methods automatically — one
+line replaces N:
+
+```julia
+using TypeContracts
+
+abstract type Store end
+function store!(::Store, ::Int) end
+function fetch(::Store) end
+
+@contract Store begin
+    store!(::Self, ::Int) :: Nothing
+    fetch(::Self)         :: Int
+end
+
+mutable struct Box; value::Int; end
+store!(b::Box, v::Int) = (b.value = v; nothing)
+fetch(b::Box) = b.value
+
+mutable struct Logged
+    inner::Box
+    n_ops::Int
+end
+Logged() = Logged(Box(0), 0)
+
+@delegate Logged :inner Store
+# Equivalent to:
+#   store!(_x1::Logged, _x2::Int) = store!(getfield(_x1, :inner), _x2)
+#   fetch(_x1::Logged) = fetch(getfield(_x1, :inner))
+# Followed by a satisfies() check that throws InterfaceError on failure.
+
+lg = Logged()
+store!(lg, 42)
+fetch(lg)   # 42
+
+satisfies(Logged, Store)   # (satisfied = true, missing_methods = [], missing_optional = [])
+```
+
+`@delegate WrapperType :field InterfaceType` reads the registered `@contract` for
+`InterfaceType` at macro-expansion time, generates one forwarding method per mandatory
+method, and immediately verifies the result via `satisfies`. The contract definition
+serves as both the specification and the forwarding template — no separate interface
+list needed.
 
 ---
 
@@ -498,7 +544,7 @@ compile time (via `@generated`), and the paths are trim-safe.
 | 2 | Type hierarchies | `abstract type B <: A` | `@contract` per level; `@verify` checks all levels at once |
 | 3 | Extending foreign types | define methods freely | `@contract` on any type; BaseTypeContracts.jl for Base |
 | 4 | Holy Trait / type tagging | manual singleton dispatch | `interface_trait` → `Implemented`/`NotImplemented`; `@generated`, trim-safe |
-| 5 | Delegation via composition | manual forwarding, `<: AbstractX` | `@verify` catches missing delegated methods at load time |
+| 5 | Delegation via composition | manual forwarding, `<: AbstractX` | `@delegate :field Interface` generates forwarders from contract; `@verify` checks completeness |
 | 6 | Blanket abstract behaviour | method on abstract type | `@invariants` + `test_behavior` for semantic laws |
 | 7 | `@generated` metaprogramming | ad-hoc `@generated` | `interface_trait` is `@generated` → statically compilable |
 | 8 | Parametric constraints | method on `Concrete{N}` | `@contract Concrete{N}` + `@verify`; explicit and discoverable |
