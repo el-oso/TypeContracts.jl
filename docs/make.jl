@@ -26,6 +26,9 @@ makedocs(;
             "Introspection"            => "guide/introspection.md",
             "Documentation Integration" => "guide/documentation.md",
         ],
+        "Examples" => [
+            "Nine Ways to Structure Interfaces" => "examples/nine-ways.md",
+        ],
         "Reference" => [
             "API Reference" => "reference/api.md",
         ],
