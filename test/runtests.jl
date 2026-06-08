@@ -47,6 +47,31 @@ end
 shape_area(s::TSquare) = s.side^2
 # Intentionally missing shape_perimeter for TSquare
 
+# ── @delegate fixtures ────────────────────────────────────────────────
+
+abstract type DelegateStore end
+function ds_store! end
+function ds_fetch end
+
+@contract DelegateStore begin
+    ds_store!(::Self, ::Int) :: Nothing
+    ds_fetch(::Self)         :: Int
+end
+
+mutable struct DBox; value::Int; end
+ds_store!(b::DBox, v::Int) = (b.value = v; nothing)
+ds_fetch(b::DBox) = b.value
+
+mutable struct LoggedBox
+    inner::DBox
+    n_ops::Int
+end
+LoggedBox() = LoggedBox(DBox(0), 0)
+
+@delegate LoggedBox :inner DelegateStore
+
+abstract type UnregisteredDelegate end
+
 # ── Compile-time enforcement ──────────────────────────────────────────
 
 abstract type AbstractSerializer end
@@ -961,5 +986,16 @@ struct RTBad <: AbstractRT end
     end
 
     include("trim_compat.jl")
+
+    # ── @delegate ──────────────────────────────────────────────────────────
+    @testset "@delegate" begin
+        lb = LoggedBox()
+        ds_store!(lb, 42)
+        @test ds_fetch(lb) == 42
+        @test satisfies(LoggedBox, DelegateStore).satisfied
+
+        # No contract registered → error
+        @test_throws Exception (@eval @delegate LoggedBox :inner UnregisteredDelegate)
+    end
 
 end

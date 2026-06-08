@@ -2,7 +2,7 @@ module TypeContracts
 
 using InteractiveUtils: supertypes, subtypes
 
-export @contract, @verify, @verify_all, @invariants,
+export @contract, @verify, @verify_all, @invariants, @delegate,
        check_contract, satisfies, list_contract, registered_contracts,
        test_behavior, list_behaviors, registered_behaviors,
        describe, interface_trait,
@@ -862,6 +862,110 @@ function _fmt(fname, atypes, rtype)
     args = join(["::$t" for t in atypes], ", ")
     sig  = "$fname($args)"
     rtype === :Any ? sig : "$sig :: $rtype"
+end
+
+# ── @delegate helpers ─────────────────────────────────────────────────
+
+function _wrapper_base_sym(T_expr)
+    T_expr isa Symbol && return T_expr
+    T_expr isa Expr && T_expr.head == :curly && return T_expr.args[1]
+    error("@delegate: expected TypeName or TypeName{T,...}, got: $T_expr")
+end
+
+function _fn_name_expr(f::Function)
+    fmod  = parentmodule(f)
+    fname = nameof(f)
+    parts = Base.fullname(fmod)
+    length(parts) == 1 && parts[1] === :Main && return fname
+    expr::Any = parts[1]::Symbol
+    for part in parts[2:end]
+        expr = Expr(:., expr, QuoteNode(part))
+    end
+    Expr(:., expr, QuoteNode(fname))
+end
+
+function _forwarder_expr(wrapper_sym::Symbol, field::Symbol, spec::MethodSpec)
+    n     = length(spec.arg_types)
+    names = [Symbol(:_x, i) for i in 1:n]
+    sig_args = Any[]
+    fwd_args = Any[]
+    for (name, at) in zip(names, spec.arg_types)
+        if at === Self
+            push!(sig_args, :($name::$(esc(wrapper_sym))))
+            push!(fwd_args, :(getfield($name, $(QuoteNode(field)))))
+        elseif at isa TypeParamRef
+            push!(sig_args, name)   # Any dispatch — safe, gets passed through
+            push!(fwd_args, name)
+        else
+            push!(sig_args, :($name::$at))
+            push!(fwd_args, name)
+        end
+    end
+    fn_expr = esc(_fn_name_expr(spec.f))
+    :($fn_expr($(sig_args...)) = $fn_expr($(fwd_args...)))
+end
+
+"""
+    @delegate WrapperType :field InterfaceType
+
+Generate forwarding methods for every mandatory method in `InterfaceType`'s
+contract, routing calls to `getfield(wrapper, :field)`. Equivalent to writing
+each forwarding method manually, but driven by the registered `@contract`.
+
+After emitting the forwarders, `satisfies(WrapperType, InterfaceType)` is called
+automatically and throws `InterfaceError` on failure.
+
+The generated forwarding methods are plain concrete method definitions — no closures,
+no runtime dispatch on abstract types. They are fully trim-safe and pass `juliac --trim`.
+
+# Example
+```julia
+using TypeContracts, BaseTypeContracts
+
+struct LoggedArray{T} <: AbstractArray{T,1}
+    data::Vector{T}
+    n_reads::Ref{Int}
+end
+LoggedArray(v::Vector{T}) where T = LoggedArray{T}(v, Ref(0))
+
+# Replaces explicit size/getindex/setindex! forwarding:
+@delegate LoggedArray :data AbstractArray
+
+LoggedArray([1, 2, 3])[2]                    # 2
+satisfies(LoggedArray{Int}, AbstractArray)   # (satisfied = true, ...)
+```
+
+# Limitations
+- Only methods in `@contract InterfaceType` are forwarded. Add to the contract first.
+- `@contract` (or `using` the package that registers it) must precede `@delegate`.
+- Arguments typed as interface type parameters are forwarded untyped (`Any` dispatch).
+"""
+macro delegate(T_expr, field_expr, I_expr)
+    field_expr isa QuoteNode ||
+        error("@delegate: second argument must be a quoted field name like :data")
+    field       = field_expr.value::Symbol
+    wrapper_sym = _wrapper_base_sym(T_expr)
+
+    I = Core.eval(__module__, I_expr)
+    I isa Type || error("@delegate: $I_expr does not evaluate to a type")
+
+    specs = get(_registry, _registry_key(I), nothing)
+    isnothing(specs) && error(
+        "@delegate: no contract registered for $I — call @contract first"
+    )
+
+    I_val = I   # captured for embedding
+    body  = Any[_forwarder_expr(wrapper_sym, field, spec)
+                for spec in specs if !spec.optional]
+    push!(body, quote
+        let _res = TypeContracts.satisfies($(esc(wrapper_sym)), $I_val)
+            _res.satisfied || throw(TypeContracts.InterfaceError(
+                string($(esc(wrapper_sym)), " does not satisfy ", $I_val,
+                       " after @delegate:\n", join(_res.missing_methods, "\n"))))
+        end
+    end)
+    push!(body, :nothing)
+    Expr(:block, body...)
 end
 
 end # module TypeContracts
