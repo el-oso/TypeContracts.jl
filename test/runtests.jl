@@ -62,7 +62,7 @@ mutable struct DBox; value::Int; end
 ds_store!(b::DBox, v::Int) = (b.value = v; nothing)
 ds_fetch(b::DBox) = b.value
 
-mutable struct LoggedBox
+mutable struct LoggedBox <: DelegateStore
     inner::DBox
     n_ops::Int
 end
