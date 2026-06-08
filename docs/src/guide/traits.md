@@ -60,11 +60,10 @@ They are exported by TypeContracts and can be used as type parameters, method ar
 
 `interface_trait` uses only `hasmethod` — it does not call `supertypes`, `Base.return_types`, `Markdown`, or `Base.Docs`. It is safe to call in a statically compiled binary produced by juliac (`--trim`).
 
-If you need trait dispatch in a static binary, register your contracts in the module's `__init__` function and call `disable_docs!()` before registration to keep the documentation machinery out of the binary:
+No manual opt-out is needed to keep the documentation machinery out of a static binary. The `?`-doc integration lives entirely in a `REPL` package extension, and `REPL` is not present in a juliac-compiled binary, so the extension never loads and `Markdown`/`Base.Docs` are never pulled in (see [Documentation Integration](documentation.md)). Register your contracts in the module's `__init__` and call `interface_trait` at runtime as usual:
 
 ```julia
 function __init__()
-    TypeContracts.disable_docs!()
     @contract AbstractShape begin
         area(::Self) :: Float64
     end
