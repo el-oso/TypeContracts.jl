@@ -296,11 +296,13 @@ function fetch(::Store) end
     fetch(::Self)         :: Int
 end
 
+# Box is the inner implementation — no need for Box <: Store
 mutable struct Box; value::Int; end
 store!(b::Box, v::Int) = (b.value = v; nothing)
 fetch(b::Box) = b.value
 
-mutable struct Logged
+# Logged formally declares itself as a Store
+mutable struct Logged <: Store
     inner::Box
     n_ops::Int
 end
