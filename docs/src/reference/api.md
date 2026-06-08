@@ -7,6 +7,7 @@ TypeContracts.@contract
 TypeContracts.@verify
 TypeContracts.@verify_all
 TypeContracts.@invariants
+TypeContracts.@delegate
 ```
 
 ## Structural checks
