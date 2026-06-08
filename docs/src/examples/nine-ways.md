@@ -41,14 +41,18 @@ the fallback with no warning.
 ```julia
 abstract type Animal end
 
+# Functions must be in scope before @contract references them.
+function speak end
+function display_name end
+
 @contract Animal "An entity that can vocalise." begin
-    speak(::Self) :: String    => "primary vocalisation"
+    speak(::Self) :: String        => "primary vocalisation"
     :optional
-    describe(::Self) :: String => "human-readable name (defaults to type name)"
+    display_name(::Self) :: String => "human-readable name (defaults to type name)"
 end
 
 # Provide the fallback for the optional method
-describe(a::Animal) = string(typeof(a))
+display_name(a::Animal) = string(typeof(a))
 
 struct Dog <: Animal end
 speak(::Dog) = "woof"
@@ -57,7 +61,7 @@ speak(::Dog) = "woof"
 
 struct Cat <: Animal end
 # speak not defined — @verify Cat would give:
-# InterfaceError: Cat does not implement speak(::Cat) :: String
+# InterfaceError: Cat does not satisfy interface contract (speak(::Self) :: String missing)
 ```
 
 `@contract` makes the interface machine-readable. `satisfies(Dog, Animal)` returns a
@@ -100,6 +104,10 @@ checks that a concrete type has all three levels covered before the code ships.
 abstract type Shape end
 abstract type Polygon <: Shape end
 abstract type RegularPolygon <: Polygon end
+
+function area end
+function perimeter end
+function side_length end
 
 @contract Shape begin
     area(::Self) :: Float64
@@ -220,8 +228,12 @@ _collect(x, ::Implemented{Iterable})    = collect(x)
 _collect(x, ::NotImplemented{Iterable}) = error("$(typeof(x)) does not satisfy Iterable")
 
 collect_items(rand(3))    # works
-collect_items(42)         # clear InterfaceError
+collect_items(nothing)    # clear error — Nothing does not satisfy Iterable
 ```
+
+(`Int` is *not* a good negative here: in `Base`, numbers implement the iteration
+protocol — `iterate(::Int)` exists — so `interface_trait(Iterable, Int)` is
+`Implemented`. `nothing` genuinely lacks `iterate`.)
 
 `interface_trait` returns `Implemented{I}()` or `NotImplemented{I}()` based on the
 registered contract. Because it is a `@generated` function, the `hasmethod` calls are
@@ -410,7 +422,7 @@ consulted at code-generation time and the body is emitted as a static chain of
 
 ```julia
 @generated function interface_trait(::Type{I}, ::Type{T}) where {I, T}
-    specs = get(_registry, I, nothing)
+    specs = get(_registry, _registry_key(I), nothing)
     isnothing(specs) && return :(NotImplemented{I}())
     checks = Expr[]
     for spec in specs
@@ -459,30 +471,40 @@ discover this only at the call site.
 
 ### With TypeContracts
 
+`@contract` targets an **abstract** type, and its `{T,N,…}` header parameters must be
+plain symbols. To attach a contract to a parametric family, declare an abstract
+supertype and contract that; `Self` then resolves to each concrete instantiation at
+check time. The value-specific gate (only `Buffer{8}` implements `set_from_bits`)
+shows up as a per-instantiation pass/fail:
+
 ```julia
-struct Buffer{N}
+abstract type AbstractBuffer{N} end
+
+struct Buffer{N} <: AbstractBuffer{N}
     data::NTuple{N, UInt8}
 end
 
-@contract Buffer{8} begin
-    set_from_bits(::Self, ::UInt8) :: Buffer{8} =>
-        "reinterpret a byte as 8 single-bit fields"
+function set_from_bits end
+
+@contract AbstractBuffer{N} begin
+    set_from_bits(::Self, ::UInt8) => "reinterpret a byte as N single-bit fields"
 end
 
 Base.length(::Buffer{N}) where N = N
 
-function set_from_bits(::Buffer{8}, bits::UInt8)
+# Only the 8-bit buffer implements the gated method.
+set_from_bits(::Buffer{8}, bits::UInt8) =
     Buffer{8}(ntuple(i -> UInt8((bits >> (i - 1)) & 1), 8))
-end
 
-@verify Buffer{8}
+@verify Buffer{8}                          # passes — set_from_bits(::Buffer{8}) exists
 
-satisfies(Buffer{8},  Buffer{8})    # satisfied = true
-satisfies(Buffer{16}, Buffer{8})    # satisfied = false (different type)
+satisfies(Buffer{8},  AbstractBuffer)      # satisfied = true
+satisfies(Buffer{16}, AbstractBuffer)      # satisfied = false — method missing for N=16
 ```
 
-`@contract` can target any type, including parametric instantiations. `describe(Buffer{8})`
-lists `set_from_bits` as mandatory, making the constraint explicit and discoverable.
+`Self` is substituted with the concrete `Buffer{N}` being checked, so `Buffer{8}`
+satisfies the contract while `Buffer{16}` does not — the parametric constraint is made
+explicit and discoverable via `satisfies` / `describe`.
 
 ---
 
@@ -549,7 +571,7 @@ compile time (via `@generated`), and the paths are trim-safe.
 | 5 | Delegation via composition | manual forwarding, `<: AbstractX` | `@delegate :field Interface` generates forwarders from contract; `@verify` checks completeness |
 | 6 | Blanket abstract behaviour | method on abstract type | `@invariants` + `test_behavior` for semantic laws |
 | 7 | `@generated` metaprogramming | ad-hoc `@generated` | `interface_trait` is `@generated` → statically compilable |
-| 8 | Parametric constraints | method on `Concrete{N}` | `@contract Concrete{N}` + `@verify`; explicit and discoverable |
+| 8 | Parametric constraints | method on `Concrete{N}` | `@contract AbstractType{N}` + `@verify`; `Self` resolves per instantiation, explicit and discoverable |
 | 9 | `where`-bounded methods | `where T <: Abstract` | `interface_trait` dispatch — named contract, trim-safe |
 
 Plain Julia covers all nine patterns — abstract types, parametric dispatch, and

@@ -2,7 +2,7 @@
 
 ## Installation
 
-TypeContracts.jl requires Julia ≥ 1.9 and has no external dependencies — only `InteractiveUtils` and `Markdown` from the Julia standard library.
+TypeContracts.jl requires Julia ≥ 1.9 and has no external dependencies — only `InteractiveUtils` from the Julia standard library. The optional `?`-doc integration is provided by a `REPL` package extension that loads automatically in interactive sessions (see [Documentation Integration](documentation.md)).
 
 ```julia
 using Pkg
