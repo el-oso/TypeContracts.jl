@@ -24,16 +24,16 @@ function _build_contract_markdown(::Type{T}) where {T}
     specs = get(TypeContracts._registry, T, nothing)
     if !isnothing(specs)
         _md_method_block(io, "Mandatory methods", filter(s -> !s.optional, specs))
-        _md_method_block(io, "Optional methods",  filter(s ->  s.optional, specs))
+        _md_method_block(io, "Optional methods", filter(s -> s.optional, specs))
     end
 
     behaviors = get(TypeContracts._behaviors, T, nothing)
     if !isnothing(behaviors)
         _md_behavior_block(io, "Behavioral invariants", filter(b -> !b.optional, behaviors))
-        _md_behavior_block(io, "Optional invariants",   filter(b ->  b.optional, behaviors))
+        _md_behavior_block(io, "Optional invariants", filter(b -> b.optional, behaviors))
     end
 
-    Markdown.parse(String(take!(io)))
+    return Markdown.parse(String(take!(io)))
 end
 
 function _md_method_block(io, title, specs)
@@ -45,7 +45,7 @@ function _md_method_block(io, title, specs)
         isempty(s.doc) || (line *= " — " * s.doc)
         println(io, line)
     end
-    println(io)
+    return println(io)
 end
 
 function _md_behavior_block(io, title, behaviors)
@@ -55,13 +55,13 @@ function _md_behavior_block(io, title, behaviors)
     for b in behaviors
         println(io, "  - ", b.description)
     end
-    println(io)
+    return println(io)
 end
 
 function _attach_doc(::Type{T}) where {T}
     try
-        md      = _build_contract_markdown(T)
-        mod     = parentmodule(T)
+        md = _build_contract_markdown(T)
+        mod = parentmodule(T)
         binding = Base.Docs.Binding(mod, nameof(T))
         metadict = Base.Docs.meta(mod)
         if haskey(metadict, binding)
@@ -71,12 +71,12 @@ function _attach_doc(::Type{T}) where {T}
                 filter!(!=(_DOC_SIG), multidoc.order)
             end
         end
-        docstr = Base.Docs.docstr(md, Dict{Symbol,Any}(:module => mod, :path => nothing, :linenumber => 0))
+        docstr = Base.Docs.docstr(md, Dict{Symbol, Any}(:module => mod, :path => nothing, :linenumber => 0))
         Base.Docs.doc!(mod, binding, docstr, _DOC_SIG)
     catch
         # Documentation is best-effort; never fatal.
     end
-    nothing
+    return nothing
 end
 
 # Provide the concrete doc-sync hook method. TypeContracts' macros call
@@ -98,6 +98,7 @@ function __init__()
     for T in keys(TypeContracts._behaviors)
         T in seen || _attach_doc(T)
     end
+    return
 end
 
 end # module TypeContractsREPLExt
