@@ -12,6 +12,7 @@ makedocs(;
         repo = "github.com/el_oso/TypeContracts.jl",
         devbranch = "master",
         devurl = "dev",
+        deploy_urk = "https://el-oso.github.io/TypeContracts.jl",
         description = "Statically-checked interface contracts for Julia abstract types.",
         sidebar_drawer = true,
     ),
