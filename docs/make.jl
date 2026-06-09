@@ -5,14 +5,13 @@ DocMeta.setdocmeta!(TypeContracts, :DocTestSetup, :(using TypeContracts); recurs
 
 makedocs(;
     modules = [TypeContracts],
-    authors = "el_oso",
+    authors = "el-oso",
     sitename = "TypeContracts.jl",
     remotes = nothing,
     format = DocumenterVitepress.MarkdownVitepress(
-        repo = "github.com/el_oso/TypeContracts.jl",
+        repo = "github.com/el-oso/TypeContracts.jl",
         devbranch = "master",
         devurl = "dev",
-        deploy_urk = "https://el-oso.github.io/TypeContracts.jl",
         description = "Statically-checked interface contracts for Julia abstract types.",
         sidebar_drawer = true,
     ),
@@ -39,6 +38,7 @@ makedocs(;
 )
 
 DocumenterVitepress.deploydocs(;
-    repo = "github.com/el_oso/TypeContracts.jl",
+    repo = "github.com/el-oso/TypeContracts.jl",
+    devbranch = "master",
     push_preview = true,
 )
