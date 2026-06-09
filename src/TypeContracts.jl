@@ -151,10 +151,19 @@ Return a copy of the global behavior registry: every type that has registered
 """
 registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
 
-# Hook set by ext/TypeContractsREPLExt.jl when REPL is loaded (interactive sessions).
-# Stays `nothing` in scripts and juliac-compiled binaries, keeping Markdown out of
-# those contexts automatically — no manual opt-out required.
-const _attach_doc_impl = Ref{Union{Nothing,Function}}(nothing)
+# Documentation attachment uses a *dispatch-based* hook. `ext/TypeContractsREPLExt.jl`
+# (loaded only when REPL is present, i.e. interactive sessions) adds a method of
+# `_attach_contract_doc` specialised on `_DocSyncHook`. In scripts and juliac-trim
+# builds the extension is absent, so the macros' doc-attach call resolves statically
+# to the no-op fallback (see the `_attach_contract_doc` definitions below).
+#
+# This is what keeps `@contract` / `@invariants` registration trim-safe even from a
+# module `__init__` (which juliac compiles as an entrypoint): the call goes through
+# ordinary multiple dispatch to a concrete method, never through a stored
+# `Function` value — the latter is an unresolved dynamic call that `--trim=safe`
+# rejects.
+struct _DocSyncHook end
+const _DOC_SYNC_HOOK = _DocSyncHook()
 
 # ── Internal ──────────────────────────────────────────────────────────
 
@@ -541,12 +550,19 @@ end
 # Doc attachment is handled by ext/TypeContractsREPLExt.jl, which loads
 # automatically when REPL is present (interactive sessions). In scripts and
 # juliac binaries REPL is absent, so the extension never loads, Markdown is
-# never pulled in, and the hook below stays a no-op — no manual opt-out needed.
+# never pulled in, and the call below resolves to the no-op fallback.
+#
+# Two-argument dispatch hook: the REPL extension adds a method specialised on
+# `_DocSyncHook` that does the actual Markdown attachment. Only this no-op
+# fallback exists in a trimmed/script context, so the call is statically resolved.
+_attach_contract_doc(::Any, @nospecialize(::Type)) = nothing
 
+# One-argument entry the macros emit. `::Type{T}` (rather than a plain `::Type`
+# value argument) forces specialisation, so the type passed to the hook is
+# concrete and the dispatch stays statically resolvable under `juliac --trim`.
 function _attach_contract_doc(::Type{T}) where {T}
-    f = _attach_doc_impl[]
-    isnothing(f) || f(T)
-    nothing
+    _attach_contract_doc(_DOC_SYNC_HOOK, T)
+    return nothing
 end
 
 # Plain-text method line for `describe`: "sig — doc" when prose is present.
