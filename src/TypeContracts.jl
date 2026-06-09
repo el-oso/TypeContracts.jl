@@ -465,52 +465,66 @@ Pretty-print the full contract for `T`: mandatory methods, optional methods,
 and behavioral invariants.
 """
 function describe(::Type{T}; io::IO = stdout) where {T}
-    println(io, "Interface contract for $T")
-    println(io, "─"^40)
+    printstyled(io, "Interface contract for "; bold = true)
+    printstyled(io, T; bold = true, color = :cyan)
+    println(io)
+    printstyled(io, "─"^40; color = :light_black)
+    println(io)
 
     specs = get(_registry, T, nothing)
     behaviors = get(_behaviors, T, nothing)
     desc = get(_descriptions, T, "")
 
     if isnothing(specs) && isnothing(behaviors)
-        println(io, "  (no contract registered)")
+        printstyled(io, "  (no contract registered)\n"; color = :light_black)
         return nothing
     end
 
-    isempty(desc) || (println(io, "  ", desc); println(io))
+    if !isempty(desc)
+        printstyled(io, "  ", desc; color = :light_black)
+        println(io); println(io)
+    end
 
     if !isnothing(specs)
         mandatory = filter(s -> !s.optional, specs)
-        optional = filter(s -> s.optional, specs)
+        optional  = filter(s -> s.optional,  specs)
 
         if !isempty(mandatory)
-            println(io, "  Mandatory methods:")
+            printstyled(io, "  Mandatory methods:\n"; bold = true, color = :green)
             for s in mandatory
-                println(io, "    ", _method_line(s))
+                print(io, "    ")
+                _print_method_line(io, s)
+                println(io)
             end
         end
         if !isempty(optional)
-            println(io, "  Optional methods:")
+            printstyled(io, "  Optional methods:\n"; bold = true, color = :yellow)
             for s in optional
-                println(io, "    ", _method_line(s))
+                print(io, "    ")
+                _print_method_line(io, s)
+                println(io)
             end
         end
     end
 
     if !isnothing(behaviors)
         mandatory_b = filter(b -> !b.optional, behaviors)
-        optional_b = filter(b -> b.optional, behaviors)
+        optional_b  = filter(b -> b.optional,  behaviors)
 
         if !isempty(mandatory_b)
-            println(io, "  Behavioral invariants:")
+            printstyled(io, "  Behavioral invariants:\n"; bold = true, color = :magenta)
             for b in mandatory_b
-                println(io, "    ", b.description)
+                print(io, "    ")
+                printstyled(io, b.description; color = :light_black)
+                println(io)
             end
         end
         if !isempty(optional_b)
-            println(io, "  Optional invariants:")
+            printstyled(io, "  Optional invariants:\n"; bold = true, color = :yellow)
             for b in optional_b
-                println(io, "    ", b.description)
+                print(io, "    ")
+                printstyled(io, b.description; color = :light_black)
+                println(io)
             end
         end
     end
@@ -524,40 +538,56 @@ end
 Pretty-print contracts for `T`'s full supertype chain.
 """
 function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
-    println(io, "Full interface contract for $T")
-    println(io, "="^40)
+    printstyled(io, "Full interface contract for "; bold = true)
+    printstyled(io, T; bold = true, color = :cyan)
+    println(io)
+    printstyled(io, "="^40; color = :light_black)
+    println(io)
 
     found = false
     for S in supertypes(T)
         key = _registry_key(S)
-        specs = get(_registry, key, nothing)
+        specs     = get(_registry,  key, nothing)
         behaviors = get(_behaviors, key, nothing)
         (isnothing(specs) && isnothing(behaviors)) && continue
         found = true
 
         println(io)
-        println(io, "  From $S:")
+        print(io, "  From ")
+        printstyled(io, S; bold = true, color = :cyan)
+        println(io, ":")
 
         if !isnothing(specs)
             mandatory = filter(s -> !s.optional, specs)
-            optional = filter(s -> s.optional, specs)
+            optional  = filter(s -> s.optional,  specs)
             for s in mandatory
-                println(io, "    ", s.description)
+                print(io, "    ")
+                _print_method_line(io, s)
+                println(io)
             end
             for s in optional
-                println(io, "    [optional] ", s.description)
+                print(io, "    ")
+                printstyled(io, "[optional] "; color = :yellow)
+                _print_method_line(io, s)
+                println(io)
             end
         end
 
         if !isnothing(behaviors)
             for b in behaviors
-                prefix = b.optional ? "[optional invariant] " : "[invariant] "
-                println(io, "    ", prefix, b.description)
+                print(io, "    ")
+                if b.optional
+                    printstyled(io, "[optional invariant] "; color = :yellow)
+                else
+                    printstyled(io, "[invariant] "; color = :magenta)
+                end
+                printstyled(io, b.description; color = :light_black)
+                println(io)
             end
         end
     end
 
-    found || println(io, "  (no contracts registered)")
+    found || printstyled(io, "  (no contracts registered)\n"; color = :light_black)
     return nothing
 end
 
@@ -580,9 +610,20 @@ function _attach_contract_doc(::Type{T}) where {T}
     return nothing
 end
 
-# Plain-text method line for `describe`: "sig — doc" when prose is present.
-function _method_line(s::MethodSpec)
-    return isempty(s.doc) ? s.description : string(s.description, " — ", s.doc)
+# Colored method line for `describe`: function name in cyan, args normal, doc dimmed.
+function _print_method_line(io::IO, s::MethodSpec)
+    desc = s.description
+    paren = findfirst('(', desc)
+    if isnothing(paren)
+        printstyled(io, desc; color = :cyan)
+    else
+        printstyled(io, desc[1:prevind(desc, paren)]; color = :cyan, bold = true)
+        print(io, desc[paren:end])
+    end
+    if !isempty(s.doc)
+        printstyled(io, " — "; color = :light_black)
+        printstyled(io, s.doc; color = :light_black)
+    end
 end
 
 # ── Macros ────────────────────────────────────────────────────────────
