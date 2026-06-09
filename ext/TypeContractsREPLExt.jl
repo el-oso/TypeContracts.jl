@@ -79,9 +79,17 @@ function _attach_doc(::Type{T}) where {T}
     nothing
 end
 
+# Provide the concrete doc-sync hook method. TypeContracts' macros call
+# `_attach_contract_doc(_DOC_SYNC_HOOK, T)`, which resolves to a no-op in core and
+# to this method once the extension is loaded — so future `@contract`/`@invariants`
+# attach docs immediately, while a juliac-trim build (extension absent) hits only
+# the no-op fallback.
+TypeContracts._attach_contract_doc(::TypeContracts._DocSyncHook, ::Type{T}) where {T} =
+    (_attach_doc(T); nothing)
+
 function __init__()
-    TypeContracts._attach_doc_impl[] = _attach_doc
-    # Retroactively attach docs for all contracts registered at precompile time.
+    # Retroactively attach docs for every contract registered before this
+    # extension loaded (e.g. package contracts registered at their own load time).
     seen = Set{Type}()
     for T in keys(TypeContracts._registry)
         push!(seen, T)
