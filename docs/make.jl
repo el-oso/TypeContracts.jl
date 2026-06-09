@@ -10,7 +10,7 @@ makedocs(;
     remotes = nothing,
     format = DocumenterVitepress.MarkdownVitepress(
         repo = "github.com/el_oso/TypeContracts.jl",
-        devbranch = "main",
+        devbranch = "master",
         devurl = "dev",
         description = "Statically-checked interface contracts for Julia abstract types.",
         sidebar_drawer = true,
