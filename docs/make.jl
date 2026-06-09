@@ -18,12 +18,12 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Guide" => [
-            "Getting Started"          => "guide/getting-started.md",
-            "Defining Contracts"       => "guide/contracts.md",
-            "Verification"             => "guide/verification.md",
-            "Behavioral Testing"       => "guide/behavioral.md",
-            "Trait Dispatch"           => "guide/traits.md",
-            "Introspection"            => "guide/introspection.md",
+            "Getting Started" => "guide/getting-started.md",
+            "Defining Contracts" => "guide/contracts.md",
+            "Verification" => "guide/verification.md",
+            "Behavioral Testing" => "guide/behavioral.md",
+            "Trait Dispatch" => "guide/traits.md",
+            "Introspection" => "guide/introspection.md",
             "Documentation Integration" => "guide/documentation.md",
         ],
         "Examples" => [
