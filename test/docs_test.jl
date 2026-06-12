@@ -24,7 +24,7 @@
     end
 
     @testset "interface description stored" begin
-        @test TypeContracts._descriptions[AbstractGizmo] == "A spinnable gizmo."
+        @test TypeContracts._contract_desc(AbstractGizmo) == "A spinnable gizmo."
     end
 
     @testset "describe surfaces prose" begin
@@ -44,7 +44,7 @@
         end
         specs = list_contract(AbstractPlain)
         @test specs[1].doc == ""
-        @test TypeContracts._descriptions[AbstractPlain] == ""
+        @test TypeContracts._contract_desc(AbstractPlain) == ""
     end
 
     @testset "non-string method description is rejected" begin

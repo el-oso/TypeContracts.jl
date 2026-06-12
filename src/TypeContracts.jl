@@ -1,6 +1,6 @@
 module TypeContracts
 
-using InteractiveUtils: supertypes, subtypes
+using InteractiveUtils: supertypes
 
 export @contract, @verify, @verify_all, @invariants, @delegate,
     check_contract, satisfies, list_contract, registered_contracts,
@@ -130,26 +130,43 @@ Base.show(io::IO, ::Implemented{I}) where {I} = print(io, "Implemented{$I}()")
 Base.show(io::IO, ::NotImplemented{I}) where {I} = print(io, "NotImplemented{$I}()")
 
 # ── Registries ────────────────────────────────────────────────────────
+#
+# `_registry` is kept as a mutable dict solely for the `interface_trait`
+# @generated function. @generated bodies run in a fixed world age and cannot
+# dispatch to methods added after the @generated function was defined, so
+# dict access (world-age-insensitive) is the only safe option there.
+#
+# Everything else — check_contract, satisfies, describe, list_contract,
+# list_behaviors, test_behavior — uses dispatch-based functions below.
+# Those are extended by `@contract` / `@invariants` via method definitions,
+# which are code rather than mutable state, making multi-package coexistence
+# safe under Julia's precompilation model.
 
 const _registry = Dict{Type, Vector{MethodSpec}}()
-const _behaviors = Dict{Type, Vector{BehaviorSpec}}()
-const _descriptions = Dict{Type, String}()   # interface-level prose
 
 """
-    registered_contracts() -> Dict{Type, Vector{MethodSpec}}
+    _contract_specs(::Type{T}) -> Vector{MethodSpec}
 
-Return a copy of the global contract registry: every abstract type that has a
-registered `@contract`, mapped to its `Vector{MethodSpec}`.
+Return method specs registered for abstract type `T` via `@contract`.
+Returns `MethodSpec[]` for types with no registered contract.
 """
-registered_contracts()::Dict{Type, Vector{MethodSpec}} = copy(_registry)
+_contract_specs(::Type) = MethodSpec[]
 
 """
-    registered_behaviors() -> Dict{Type, Vector{BehaviorSpec}}
+    _behavior_specs(::Type{T}) -> Vector{BehaviorSpec}
 
-Return a copy of the global behavior registry: every type that has registered
-`@invariants`, mapped to its `Vector{BehaviorSpec}`.
+Return behavioral invariants registered for type `T` via `@invariants`.
+Returns `BehaviorSpec[]` for types with none registered.
 """
-registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
+_behavior_specs(::Type) = BehaviorSpec[]
+
+"""
+    _contract_desc(::Type{T}) -> String
+
+Return the interface-level prose description for abstract type `T`.
+Returns `""` if none was provided to `@contract`.
+"""
+_contract_desc(::Type) = ""
 
 # Documentation attachment uses a *dispatch-based* hook. `ext/TypeContractsREPLExt.jl`
 # (loaded only when REPL is present, i.e. interactive sessions) adds a method of
@@ -164,6 +181,51 @@ registered_behaviors()::Dict{Type, Vector{BehaviorSpec}} = copy(_behaviors)
 # rejects.
 struct _DocSyncHook end
 const _DOC_SYNC_HOOK = _DocSyncHook()
+
+# ── Introspection helpers ─────────────────────────────────────────────
+
+function _method_registered_type(m::Method)
+    p = m.sig.parameters
+    length(p) == 2 || return nothing
+    p[2] isa DataType && p[2].name.name === :Type || return nothing
+    isempty(p[2].parameters) && return nothing
+    T = p[2].parameters[1]
+    return T isa Type ? T : nothing
+end
+
+"""
+    registered_contracts() -> Dict{Type, Vector{MethodSpec}}
+
+Return every abstract type that has a registered `@contract`, mapped to its
+`Vector{MethodSpec}`. Implemented via method introspection; intended for
+interactive use.
+"""
+function registered_contracts()::Dict{Type, Vector{MethodSpec}}
+    result = Dict{Type, Vector{MethodSpec}}()
+    for m in methods(_contract_specs)
+        T = _method_registered_type(m)
+        T === nothing && continue
+        result[T] = _contract_specs(T)
+    end
+    return result
+end
+
+"""
+    registered_behaviors() -> Dict{Type, Vector{BehaviorSpec}}
+
+Return every type that has registered `@invariants`, mapped to its
+`Vector{BehaviorSpec}`. Implemented via method introspection; intended for
+interactive use.
+"""
+function registered_behaviors()::Dict{Type, Vector{BehaviorSpec}}
+    result = Dict{Type, Vector{BehaviorSpec}}()
+    for m in methods(_behavior_specs)
+        T = _method_registered_type(m)
+        T === nothing && continue
+        result[T] = _behavior_specs(T)
+    end
+    return result
+end
 
 # ── Internal ──────────────────────────────────────────────────────────
 
@@ -238,8 +300,8 @@ function check_contract(T::Type)
     checked = Type[]
 
     for S in supertypes(T)
-        specs = get(_registry, _registry_key(S), nothing)
-        isnothing(specs) && continue
+        specs = _contract_specs(_registry_key(S))
+        isempty(specs) && continue
         push!(checked, _registry_key(S))
         for spec in specs
             spec.optional && continue
@@ -286,8 +348,8 @@ Non-throwing check. Returns `(satisfied, missing_methods, missing_optional)`.
 Precompile-time tool — uses `Base.return_types` for return type checking.
 """
 function satisfies(T::Type, S::Type)
-    specs = get(_registry, _registry_key(S), nothing)
-    isnothing(specs) && return (satisfied = true, missing_methods = String[], missing_optional = String[])
+    specs = _contract_specs(_registry_key(S))
+    isempty(specs) && return (satisfied = true, missing_methods = String[], missing_optional = String[])
 
     missing_methods = String[]
     missing_optional = String[]
@@ -321,7 +383,7 @@ end
 Return method specs registered directly for type `T`.
 """
 function list_contract(T::Type)::Vector{MethodSpec}
-    return get(_registry, T, MethodSpec[])
+    return _contract_specs(T)
 end
 
 """
@@ -333,8 +395,8 @@ function list_contract(T::Type, ::Val{:all})::Dict{Type, Vector{MethodSpec}}
     result = Dict{Type, Vector{MethodSpec}}()
     for S in supertypes(T)
         key = _registry_key(S)
-        specs = get(_registry, key, nothing)
-        !isnothing(specs) && (result[key] = specs)
+        specs = _contract_specs(key)
+        !isempty(specs) && (result[key] = specs)
     end
     return result
 end
@@ -345,7 +407,7 @@ end
 Return behavioral invariants registered directly for type `T`.
 """
 function list_behaviors(T::Type)::Vector{BehaviorSpec}
-    return get(_behaviors, T, BehaviorSpec[])
+    return _behavior_specs(T)
 end
 
 # ── Public API: Holy Trait Dispatch ───────────────────────────────────
@@ -407,8 +469,8 @@ function test_behavior(::Type{T}, objects) where {T}
     }[]
 
     for S in supertypes(T)
-        behaviors = get(_behaviors, _registry_key(S), nothing)
-        isnothing(behaviors) && continue
+        behaviors = _behavior_specs(_registry_key(S))
+        isempty(behaviors) && continue
         _run_behaviors!(results, S, behaviors, objects)
     end
 
@@ -427,8 +489,8 @@ function test_behavior(::Type{T}, ::Type{S}, objects) where {T, S}
         Tuple{Type, String, Bool, Bool, String},
     }[]
 
-    behaviors = get(_behaviors, S, nothing)
-    !isnothing(behaviors) && _run_behaviors!(results, S, behaviors, objects)
+    behaviors = _behavior_specs(S)
+    !isempty(behaviors) && _run_behaviors!(results, S, behaviors, objects)
 
     mandatory_failures = filter(r -> !r.passed && !r.optional, results)
     return (passed = isempty(mandatory_failures), results = results, mandatory_failures = mandatory_failures)
@@ -471,11 +533,11 @@ function describe(::Type{T}; io::IO = stdout) where {T}
     printstyled(io, "─"^40; color = :light_black)
     println(io)
 
-    specs = get(_registry, T, nothing)
-    behaviors = get(_behaviors, T, nothing)
-    desc = get(_descriptions, T, "")
+    specs = _contract_specs(T)
+    behaviors = _behavior_specs(T)
+    desc = _contract_desc(T)
 
-    if isnothing(specs) && isnothing(behaviors)
+    if isempty(specs) && isempty(behaviors)
         printstyled(io, "  (no contract registered)\n"; color = :light_black)
         return nothing
     end
@@ -485,9 +547,9 @@ function describe(::Type{T}; io::IO = stdout) where {T}
         println(io); println(io)
     end
 
-    if !isnothing(specs)
+    if !isempty(specs)
         mandatory = filter(s -> !s.optional, specs)
-        optional  = filter(s -> s.optional,  specs)
+        optional = filter(s -> s.optional, specs)
 
         if !isempty(mandatory)
             printstyled(io, "  Mandatory methods:\n"; bold = true, color = :green)
@@ -507,9 +569,9 @@ function describe(::Type{T}; io::IO = stdout) where {T}
         end
     end
 
-    if !isnothing(behaviors)
+    if !isempty(behaviors)
         mandatory_b = filter(b -> !b.optional, behaviors)
-        optional_b  = filter(b -> b.optional,  behaviors)
+        optional_b = filter(b -> b.optional, behaviors)
 
         if !isempty(mandatory_b)
             printstyled(io, "  Behavioral invariants:\n"; bold = true, color = :magenta)
@@ -547,9 +609,9 @@ function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
     found = false
     for S in supertypes(T)
         key = _registry_key(S)
-        specs     = get(_registry,  key, nothing)
-        behaviors = get(_behaviors, key, nothing)
-        (isnothing(specs) && isnothing(behaviors)) && continue
+        specs = _contract_specs(key)
+        behaviors = _behavior_specs(key)
+        (isempty(specs) && isempty(behaviors)) && continue
         found = true
 
         println(io)
@@ -557,9 +619,9 @@ function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
         printstyled(io, S; bold = true, color = :cyan)
         println(io, ":")
 
-        if !isnothing(specs)
+        if !isempty(specs)
             mandatory = filter(s -> !s.optional, specs)
-            optional  = filter(s -> s.optional,  specs)
+            optional = filter(s -> s.optional, specs)
             for s in mandatory
                 print(io, "    ")
                 _print_method_line(io, s)
@@ -573,7 +635,7 @@ function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
             end
         end
 
-        if !isnothing(behaviors)
+        if !isempty(behaviors)
             for b in behaviors
                 print(io, "    ")
                 if b.optional
@@ -620,7 +682,7 @@ function _print_method_line(io::IO, s::MethodSpec)
         printstyled(io, desc[1:prevind(desc, paren)]; color = :cyan, bold = true)
         print(io, desc[paren:end])
     end
-    if !isempty(s.doc)
+    return if !isempty(s.doc)
         printstyled(io, " — "; color = :light_black)
         printstyled(io, s.doc; color = :light_black)
     end
@@ -711,8 +773,15 @@ function _build_contract_expr(T_expr, desc::String, block)
     return quote
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
+        # Dict write for interface_trait (@generated bodies need world-age-safe dict access)
         TypeContracts._registry[$(esc(abstract_sym))] = TypeContracts.MethodSpec[$(spec_exprs...)]
-        TypeContracts._descriptions[$(esc(abstract_sym))] = $desc
+        # Method definitions for everything else (precompilation-safe across packages)
+        function TypeContracts._contract_specs(::Type{$(esc(abstract_sym))})
+            return TypeContracts.MethodSpec[$(spec_exprs...)]
+        end
+        function TypeContracts._contract_desc(::Type{$(esc(abstract_sym))})
+            $desc
+        end
         TypeContracts._attach_contract_doc($(esc(abstract_sym)))
         nothing
     end
@@ -769,28 +838,19 @@ macro verify_all()
     end
 end
 
-function _all_concrete_subtypes(T::Type)
-    result = Type[]
-    for S in subtypes(T)
-        if isabstracttype(S)
-            append!(result, _all_concrete_subtypes(S))
-        else
-            push!(result, S)
-        end
-    end
-    return result
-end
-
 function _verify_all_in_module(mod::Module)
     checked = Type[]
 
-    for abstract_type in keys(_registry)
-        for T in _all_concrete_subtypes(abstract_type)
-            parentmodule(T) === mod || continue
-            T in checked && continue
-            check_contract(T)
-            push!(checked, T)
-        end
+    for name in names(mod, all = true)
+        isdefined(mod, name) || continue
+        val = getfield(mod, name)
+        val isa Type || continue
+        isabstracttype(val) && continue
+        parentmodule(val) === mod || continue
+        any(S -> !isempty(_contract_specs(_registry_key(S))), supertypes(val)) || continue
+        val in checked && continue
+        check_contract(val)
+        push!(checked, val)
     end
 
     return (types = checked, passed = true)
@@ -835,7 +895,9 @@ macro invariants(T, block)
     end
 
     return quote
-        TypeContracts._behaviors[$(esc(T))] = TypeContracts.BehaviorSpec[$(spec_exprs...)]
+        function TypeContracts._behavior_specs(::Type{$(esc(T))})
+            return TypeContracts.BehaviorSpec[$(spec_exprs...)]
+        end
         TypeContracts._attach_contract_doc($(esc(T)))
         nothing
     end
@@ -1025,8 +1087,8 @@ macro delegate(T_expr, field_expr, I_expr)
     I = Core.eval(__module__, I_expr)
     I isa Type || error("@delegate: $I_expr does not evaluate to a type")
 
-    specs = get(_registry, _registry_key(I), nothing)
-    isnothing(specs) && error(
+    specs = _contract_specs(_registry_key(I))
+    isempty(specs) && error(
         "@delegate: no contract registered for $I — call @contract first"
     )
 
