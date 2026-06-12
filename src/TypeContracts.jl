@@ -6,7 +6,7 @@ export @contract, @verify, @verify_all, @invariants, @delegate,
     @test_implements, @test_behavior_passes,
     check_contract, satisfies, implements, list_contract, registered_contracts,
     test_behavior, behavior_passes, list_behaviors, registered_behaviors,
-    describe, interface_trait,
+    describe, interface_trait, contract_md_string, contract_md,
     Self, TypeParamRef, InterfaceError, MethodSpec, BehaviorSpec,
     Implemented, NotImplemented
 
@@ -49,7 +49,27 @@ struct InterfaceError <: Exception
     msg::String
 end
 
-Base.showerror(io::IO, e::InterfaceError) = print(io, "InterfaceError: ", e.msg)
+function Base.showerror(io::IO, e::InterfaceError)
+    printstyled(io, "InterfaceError"; bold = true, color = :red)
+    print(io, ": ")
+    lines = split(e.msg, '\n')
+    for (i, line) in enumerate(lines)
+        i > 1 && println(io)
+        if startswith(line, "  ")
+            # method line: "  desc  [required by T]"
+            m = match(r"^(  .+?)(\s{2,}\[required by .+\])$", line)
+            if !isnothing(m)
+                printstyled(io, m[1]; color = :yellow)
+                printstyled(io, m[2]; color = :light_black)
+            else
+                printstyled(io, line; color = :yellow)
+            end
+        else
+            printstyled(io, line; bold = (i == 1))
+        end
+    end
+    return
+end
 
 """
     MethodSpec
@@ -76,8 +96,9 @@ struct MethodSpec
 end
 
 function Base.show(io::IO, s::MethodSpec)
-    s.optional && print(io, "[optional] ")
-    return print(io, s.description)
+    s.optional && printstyled(io, "[optional] "; color = :yellow)
+    _print_sig_highlighted(io, s.description)
+    return isempty(s.doc) || printstyled(io, " — $(s.doc)"; color = :light_black)
 end
 
 """
@@ -97,8 +118,8 @@ struct BehaviorSpec
 end
 
 function Base.show(io::IO, b::BehaviorSpec)
-    b.optional && print(io, "[optional] ")
-    return print(io, b.description)
+    b.optional && printstyled(io, "[optional] "; color = :yellow)
+    return printstyled(io, b.description; color = :magenta)
 end
 
 # ── Holy Trait Types ──────────────────────────────────────────────────
@@ -484,11 +505,11 @@ Pass `S` to test only the invariants registered for a specific interface.
 Pass `include_optional=true` to require optional invariants as well.
 """
 function behavior_passes(
-    ::Type{T},
-    objects;
-    S::Union{Type, Nothing} = nothing,
-    include_optional::Bool = false,
-)::Bool where {T}
+        ::Type{T},
+        objects;
+        S::Union{Type, Nothing} = nothing,
+        include_optional::Bool = false,
+    )::Bool where {T}
     r = isnothing(S) ? test_behavior(T, objects) : test_behavior(T, S, objects)
     include_optional || return r.passed
     return all(res -> res.passed, r.results)
@@ -513,21 +534,23 @@ macro test_implements(T_expr, S_expr)
     m = gensym("m")
     # esc(quote …) disables hygiene so @test resolves in the caller's module;
     # gensyms prevent local variable collisions with caller scope.
-    return esc(quote
-        let $r = TypeContracts.satisfies($T_expr, $S_expr)
-            if !$r.satisfied
-                printstyled(
-                    stderr,
-                    "\n  @test_implements ", $T_str, " ", $S_str, " — missing methods:\n";
-                    bold = true, color = :red,
-                )
-                for $m in $r.missing_methods
-                    printstyled(stderr, "    • ", $m, "\n"; color = :light_black)
+    return esc(
+        quote
+            let $r = TypeContracts.satisfies($T_expr, $S_expr)
+                if !$r.satisfied
+                    printstyled(
+                        stderr,
+                        "\n  @test_implements ", $T_str, " ", $S_str, " — missing methods:\n";
+                        bold = true, color = :red,
+                    )
+                    for $m in $r.missing_methods
+                        printstyled(stderr, "    • ", $m, "\n"; color = :light_black)
+                    end
                 end
+                @test $r.satisfied
             end
-            @test $r.satisfied
         end
-    end)
+    )
 end
 
 """
@@ -547,23 +570,25 @@ macro test_behavior_passes(T_expr, objs_expr)
     T_str = string(T_expr)
     r = gensym("r")
     f = gensym("f")
-    return esc(quote
-        let $r = TypeContracts.test_behavior($T_expr, $objs_expr)
-            if !$r.passed
-                printstyled(
-                    stderr,
-                    "\n  @test_behavior_passes ", $T_str, " — failed invariants:\n";
-                    bold = true, color = :red,
-                )
-                for $f in $r.mandatory_failures
-                    printstyled(stderr, "    • ", $f.description, "\n"; color = :light_black)
-                    isempty($f.error) ||
-                        printstyled(stderr, "      error: ", $f.error, "\n"; color = :light_black)
+    return esc(
+        quote
+            let $r = TypeContracts.test_behavior($T_expr, $objs_expr)
+                if !$r.passed
+                    printstyled(
+                        stderr,
+                        "\n  @test_behavior_passes ", $T_str, " — failed invariants:\n";
+                        bold = true, color = :red,
+                    )
+                    for $f in $r.mandatory_failures
+                        printstyled(stderr, "    • ", $f.description, "\n"; color = :light_black)
+                        isempty($f.error) ||
+                            printstyled(stderr, "      error: ", $f.error, "\n"; color = :light_black)
+                    end
                 end
+                @test $r.passed
             end
-            @test $r.passed
         end
-    end)
+    )
 end
 
 # ── Public API: Holy Trait Dispatch ───────────────────────────────────
@@ -809,6 +834,79 @@ function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
     return nothing
 end
 
+# ── Markdown rendering ───────────────────────────────────────────────
+
+"""
+    contract_md_string(T::Type) -> String
+
+Return a Markdown-formatted string describing the contract and behavioral
+invariants registered for `T`. Suitable for Documenter `@eval` blocks —
+a `String` return value is rendered as Markdown by Documenter.
+
+Returns an empty string when no contract or invariants are registered for `T`.
+"""
+function contract_md_string(::Type{T}) where {T}
+    specs = _contract_specs(T)
+    behaviors = _behavior_specs(T)
+    isempty(specs) && isempty(behaviors) && return ""
+
+    io = IOBuffer()
+    println(io, "# TypeContracts Interface")
+    println(io)
+    desc = _contract_desc(T)
+    isempty(desc) || (println(io, desc); println(io))
+
+    if !isempty(specs)
+        _cmd_md_method_block(io, "**Mandatory methods**", filter(s -> !s.optional, specs))
+        _cmd_md_method_block(io, "**Optional methods**", filter(s -> s.optional, specs))
+    end
+    if !isempty(behaviors)
+        _cmd_md_behavior_block(io, "**Behavioral invariants**", filter(b -> !b.optional, behaviors))
+        _cmd_md_behavior_block(io, "**Optional invariants**", filter(b -> b.optional, behaviors))
+    end
+    return String(take!(io))
+end
+
+function _cmd_md_method_block(io, title, specs)
+    isempty(specs) && return
+    println(io, title)
+    println(io)
+    for s in specs
+        line = "  - `$(s.description)`"
+        isempty(s.doc) || (line *= " — $(s.doc)")
+        println(io, line)
+    end
+    return println(io)
+end
+
+function _cmd_md_behavior_block(io, title, behaviors)
+    isempty(behaviors) && return
+    println(io, title)
+    println(io)
+    for b in behaviors
+        println(io, "  - $(b.description)")
+    end
+    return println(io)
+end
+
+"""
+    contract_md(T::Type)
+
+Return a `Markdown.MD` object for the contract registered on `T`.
+Requires the `TypeContractsDocumenterExt` extension, which loads automatically
+when `using Documenter` is in scope. Returns `nothing` when the extension is absent.
+"""
+function contract_md(::Type{T}) where {T}
+    return _contract_md_impl(_MD_RENDER_HOOK, T)
+end
+
+# Dispatch hook for contract_md. TypeContractsDocumenterExt adds a method
+# specialised on `_MdRenderHook`. The no-op fallback here ensures contract_md
+# returns nothing in non-Documenter contexts without pulling in Markdown.
+struct _MdRenderHook end
+const _MD_RENDER_HOOK = _MdRenderHook()
+_contract_md_impl(::Any, @nospecialize(::Type)) = nothing
+
 # ── Documentation integration ─────────────────────────────────────────
 # Doc attachment is handled by ext/TypeContractsREPLExt.jl, which loads
 # automatically when REPL is present (interactive sessions). In scripts and
@@ -829,15 +927,42 @@ function _attach_contract_doc(::Type{T}) where {T}
 end
 
 # Colored method line for `describe`: function name in cyan, args normal, doc dimmed.
-function _print_method_line(io::IO, s::MethodSpec)
-    desc = s.description
+function _print_sig_highlighted(io::IO, desc::String)
     paren = findfirst('(', desc)
     if isnothing(paren)
-        printstyled(io, desc; color = :cyan)
-    else
-        printstyled(io, desc[1:prevind(desc, paren)]; color = :cyan, bold = true)
-        print(io, desc[paren:end])
+        printstyled(io, desc; color = :cyan, bold = true)
+        return
     end
+    printstyled(io, desc[1:prevind(desc, paren)]; color = :cyan, bold = true)
+    printstyled(io, "("; color = :light_black)
+
+    close_paren = findlast(')', desc)
+    args_str = desc[nextind(desc, paren):prevind(desc, close_paren)]
+    first = true
+    for arg in split(args_str, ", ")
+        first || printstyled(io, ", "; color = :light_black)
+        first = false
+        arg = strip(String(arg))
+        if startswith(arg, "::")
+            printstyled(io, "::"; color = :light_black)
+            tname = arg[3:end]
+            printstyled(io, tname; color = tname == "Self" ? :cyan : :yellow)
+        else
+            print(io, arg)
+        end
+    end
+
+    printstyled(io, ")"; color = :light_black)
+    suffix = String(desc[nextind(desc, close_paren):end])
+    m = match(r"^ :: (.+)$", suffix)
+    return if !isnothing(m)
+        printstyled(io, " :: "; color = :light_black)
+        printstyled(io, m[1]; color = :green)
+    end
+end
+
+function _print_method_line(io::IO, s::MethodSpec)
+    _print_sig_highlighted(io, s.description)
     return if !isempty(s.doc)
         printstyled(io, " — "; color = :light_black)
         printstyled(io, s.doc; color = :light_black)

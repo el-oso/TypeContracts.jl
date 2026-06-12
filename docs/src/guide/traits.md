@@ -56,19 +56,145 @@ struct NotImplemented{I} end
 
 They are exported by TypeContracts and can be used as type parameters, method argument types, or anywhere else a type is expected.
 
-## juliac compatibility
+## juliac / trim compatibility
 
-`interface_trait` uses only `hasmethod` — it does not call `supertypes`, `Base.return_types`, `Markdown`, or `Base.Docs`. It is safe to call in a statically compiled binary produced by juliac (`--trim`).
+`interface_trait` is the only TypeContracts function designed to be called at runtime
+inside a `juliac --trim` compiled binary. Understanding why requires understanding what
+trim does and what makes a function trim-safe.
 
-No manual opt-out is needed to keep the documentation machinery out of a static binary. The `?`-doc integration lives entirely in a `REPL` package extension, and `REPL` is not present in a juliac-compiled binary, so the extension never loads and `Markdown`/`Base.Docs` are never pulled in (see [Documentation Integration](documentation.md)). Register your contracts in the module's `__init__` and call `interface_trait` at runtime as usual:
+### What `juliac --trim` does
+
+`juliac --trim` (also called ahead-of-time compilation or AOT) compiles Julia to a
+native binary by performing dead-code elimination starting from one or more declared
+entry points. Everything not reachable from those entry points is stripped. The result
+has **no Julia runtime** — no JIT compiler, no type inferencer, and no `Base.return_types`.
+Functions that depend on those facilities cannot work in a trimmed binary.
+
+### Why `interface_trait` is trim-safe: two interlocking reasons
+
+**Reason 1 — it only uses `hasmethod`.**
+The check inside `interface_trait` is purely "does this method exist in the method
+table?" (`hasmethod(f, Tuple{T, arg_types...})`). `hasmethod` is a simple lookup —
+no inference, no JIT. It is available in trimmed binaries.
+
+**Reason 2 — it is a `@generated` function that bakes in concrete types.**
+`@generated` functions run their *body* at *specialisation time* — once per unique
+`(I, T)` type pair, during normal Julia compilation, not at the runtime you ship.
+The generated code is a fixed expression:
 
 ```julia
-function __init__()
-    @contract AbstractShape begin
-        area(::Self) :: Float64
-    end
-end
+# What the @generated body emits for interface_trait(AbstractShape, Circle):
+hasmethod(area, Tuple{Circle}) && hasmethod(perimeter, Tuple{Circle}) ?
+    Implemented{AbstractShape}() : NotImplemented{AbstractShape}()
 ```
+
+Both `area`, `Circle`, and `perimeter` are **concrete values baked in at generation
+time**. There is no stored abstract `Function` value, no runtime registry lookup, no
+dynamic signature construction. From the perspective of the trimmer, this is just a
+pair of concrete `hasmethod` calls — statically resolvable.
+
+### The `_registry` dict and world age
+
+There is a subtle constraint that explains why TypeContracts uses *two* registries —
+a mutable dict `_registry` for `interface_trait`, and dispatch-based `_contract_specs`
+methods for everything else.
+
+`@generated` bodies run in a **fixed world age** — the world age at the time the
+`@generated` function was first specialised for a given type pair. They cannot see
+methods added to `_contract_specs` *after* that world age, because those methods
+did not exist when the body was generated. A plain method dispatch inside a
+`@generated` body would silently return the wrong answer for contracts registered
+later.
+
+A mutable dict has no world-age constraint — dict reads are always current. So
+`_registry` is the correct data structure for `interface_trait` to read during code
+generation: when `@contract` fires it writes to `_registry` unconditionally, and the
+`@generated` body reads `_registry` at specialisation time and emits concrete
+`hasmethod` expressions for whatever it finds there.
+
+Every other TypeContracts function — `check_contract`, `satisfies`, `describe`,
+`list_contract` — uses `_contract_specs` (the dispatch-based registry) because they
+run at normal world ages where method dispatch works correctly. They never touch
+`_registry` directly.
+
+### Why other functions are not trim-safe
+
+**`check_contract`, `satisfies`, `implements`** all call `Base.return_types`.
+Return type checking requires Julia's type inferencer, which is part of the Julia
+runtime and is **not available in a trimmed binary**. These functions are designed
+for precompile time and test time, not for runtime use in a static binary.
+
+**`@verify`, `@verify_all`** run at module load/precompile time by design. They also
+call `Base.return_types`. They will never appear in a user's runtime call path.
+
+**`describe`, `list_contract`, `contract_md_string`** do not call `Base.return_types`,
+so they are technically trim-compatible in isolation. However, they are introspection
+and documentation tools. There is no sensible reason to call them at runtime in a
+static binary — they exist for development-time exploration and documentation
+generation. Treat them as precompile-time tools.
+
+**`contract_md`** requires the `Documenter` extension, which is never loaded in a
+juliac binary. Without the extension it returns `nothing` via a no-op dispatch hook.
+
+### What to call at runtime in a trimmed binary
+
+The answer is: **only `interface_trait`**, plus your own dispatch methods that branch
+on `Implemented{I}` / `NotImplemented{I}`.
+
+| Function | Trim-safe? | When to use |
+|---|---|---|
+| `interface_trait` | ✓ Yes | Runtime dispatch in trimmed binary |
+| `@verify`, `@verify_all` | — precompile only | Module load / `__init__` |
+| `check_contract` | ✗ No (`Base.return_types`) | Test time |
+| `satisfies` | ✗ No (`Base.return_types`) | Test time |
+| `implements` | ✗ No (`Base.return_types`) | Test time |
+| `describe` | — doc tool | REPL / development |
+| `list_contract` | — doc tool | REPL / development |
+| `contract_md_string` | — doc tool | Documenter `@eval` blocks |
+| `test_behavior` | — test tool | Behavioral test suites |
+
+### No manual opt-out needed
+
+The documentation and doc-attachment machinery lives entirely in package extensions:
+
+- `TypeContractsREPLExt` loads only when `REPL` is present. `REPL` is not present in
+  juliac-compiled binaries, so `Markdown` and `Base.Docs` are never pulled in.
+- `TypeContractsDocumenterExt` loads only when `Documenter` is present, which is
+  likewise absent from juliac binaries.
+
+Both extensions use the same dispatch-hook pattern as `_attach_contract_doc`: the hook
+resolves statically to a no-op in the trimmed context. No REPL, no Markdown, no Docs
+code enters the binary.
+
+### Registering contracts in a trimmed binary
+
+Register contracts in your module body or `__init__`, then call `interface_trait`
+at runtime:
+
+```julia
+module MyLib
+using TypeContracts
+
+abstract type AbstractShape end
+function area end
+
+@contract AbstractShape begin
+    area(::Self) :: Float64
+end
+
+# --- Runtime use: only interface_trait --------------------------------
+_draw(::Implemented{AbstractShape},    x) = "drawing shape, area=$(area(x))"
+_draw(::NotImplemented{AbstractShape}, x) = error("$(typeof(x)) is not a shape")
+
+draw(x) = _draw(interface_trait(AbstractShape, typeof(x)), x)
+
+end # module
+```
+
+`@contract` writes to `_registry` at module load time (before any `@generated`
+specialisation). By the time `draw(x)` is first called with a concrete type,
+`interface_trait` specialises, reads `_registry`, bakes in the concrete `hasmethod`
+checks, and the result is a static dispatch — exactly what the trimmer needs.
 
 ## Checking multiple interfaces
 

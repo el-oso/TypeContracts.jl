@@ -1,24 +1,21 @@
-module TypeContractsREPLExt
+module TypeContractsDocumenterExt
 
-using TypeContracts
-using REPL
+using TypeContracts, Documenter, Markdown
 import Base.Docs
 
-# REPL is the sole extension trigger. REPL always loads Markdown, so we reach
-# Markdown through it rather than declaring a separate weakdep — Julia only lets
-# an extension `using` the host's regular deps plus its own trigger packages,
-# and a non-trigger weakdep (Markdown) would be rejected at precompile time.
-const Markdown = REPL.Markdown
-
-# Sentinel signature that coexists with any existing docstring for a type.
+# Same sentinel signature as the REPL extension — coexists with any existing docstring.
 const _DOC_SIG = Tuple{Val{:TypeContractsContract}}
 
-_build_contract_markdown(::Type{T}) where {T} =
+# Provide the concrete contract_md implementation via the dispatch hook.
+# TypeContracts.contract_md calls _contract_md_impl(_MD_RENDER_HOOK, T), which
+# resolves to this method once the extension is loaded.
+TypeContracts._contract_md_impl(::TypeContracts._MdRenderHook, ::Type{T}) where {T} =
     Markdown.parse(TypeContracts.contract_md_string(T))
 
 function _attach_doc(::Type{T}) where {T}
+    isempty(TypeContracts.contract_md_string(T)) && return
     try
-        md = _build_contract_markdown(T)
+        md = TypeContracts.contract_md(T)
         mod = parentmodule(T)
         binding = Base.Docs.Binding(mod, nameof(T))
         metadict = Base.Docs.meta(mod)
@@ -29,21 +26,16 @@ function _attach_doc(::Type{T}) where {T}
                 filter!(!=(_DOC_SIG), multidoc.order)
             end
         end
-        docstr = Base.Docs.docstr(md, Dict{Symbol, Any}(:module => mod, :path => nothing, :linenumber => 0))
+        docstr = Base.Docs.docstr(
+            md,
+            Dict{Symbol, Any}(:module => mod, :path => nothing, :linenumber => 0),
+        )
         Base.Docs.doc!(mod, binding, docstr, _DOC_SIG)
     catch
         # Documentation is best-effort; never fatal.
     end
     return nothing
 end
-
-# Provide the concrete doc-sync hook method. TypeContracts' macros call
-# `_attach_contract_doc(_DOC_SYNC_HOOK, T)`, which resolves to a no-op in core and
-# to this method once the extension is loaded — so future `@contract`/`@invariants`
-# attach docs immediately, while a juliac-trim build (extension absent) hits only
-# the no-op fallback.
-TypeContracts._attach_contract_doc(::TypeContracts._DocSyncHook, ::Type{T}) where {T} =
-    (_attach_doc(T); nothing)
 
 function _registered_type(m::Method)
     p = m.sig.parameters
@@ -56,7 +48,7 @@ end
 
 function __init__()
     # Retroactively attach docs for every contract registered before this
-    # extension loaded (e.g. package contracts registered at their own load time).
+    # extension loaded (e.g. all contracts from BaseTypeContracts, user packages).
     seen = Set{Type}()
     for m in methods(TypeContracts._contract_specs)
         T = _registered_type(m)
@@ -72,4 +64,4 @@ function __init__()
     return
 end
 
-end # module TypeContractsREPLExt
+end # module TypeContractsDocumenterExt
