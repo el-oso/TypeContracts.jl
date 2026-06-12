@@ -146,8 +146,8 @@ Full documentation is available at **https://el-oso.github.io/TypeContracts.jl/d
 | `satisfies(T, S)` | Non-throwing check; returns `(satisfied, missing_methods, missing_optional)` |
 | `list_contract(T)` | Returns `Vector{MethodSpec}` registered for `T` |
 | `list_contract(T, Val(:all))` | Returns contracts for `T`'s full supertype chain |
-| `describe(T)` | Pretty-prints the contract for `T` |
-| `describe(T, Val(:all))` | Pretty-prints contracts across `T`'s supertype chain |
+| `describe(T)` | Pretty-prints the contract for `T`; full chain for concrete types, own level for abstract types |
+| `describe(T; all=true)` | Always shows the full supertype chain (equivalent to `describe(T, Val(:all))`) |
 | `interface_trait(I, T)` | Returns `Implemented{I}()` or `NotImplemented{I}()` for trait dispatch |
 | `@invariants T begin ... end` | Register behavioral predicates for `T` |
 | `test_behavior(T, objects)` | Run behavioral invariants against test objects |

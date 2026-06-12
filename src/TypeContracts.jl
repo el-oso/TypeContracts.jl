@@ -702,12 +702,28 @@ end
 # ── Public API: Describe ──────────────────────────────────────────────
 
 """
-    describe(T::Type; io::IO=stdout)
+    describe(T::Type; io::IO=stdout, all::Bool=!isabstracttype(T))
 
-Pretty-print the full contract for `T`: mandatory methods, optional methods,
-and behavioral invariants.
+Pretty-print the contract for `T`.
+
+- `all=true` — walks the full supertype chain and shows every inherited
+  contract (equivalent to `describe(T, Val(:all))`).
+- `all=false` — shows only what `T` itself registers: the methods and
+  invariants declared directly in `@contract T` and `@invariants T`.
+
+The default is `true` for concrete types (since contracts live on abstract supertypes,
+not on the concrete type itself) and `false` for abstract types (showing only what
+that level adds). Pass `all=true` on an abstract type to see the full chain:
+
+```julia
+describe(AbstractFloat)             # own invariants only
+describe(AbstractFloat; all=true)   # + Real + Number
+describe(Float64)                   # full chain (default for concrete)
+describe(Float64; all=false)        # (no contract registered)
+```
 """
-function describe(::Type{T}; io::IO = stdout) where {T}
+function describe(::Type{T}; io::IO = stdout, all::Bool = !isabstracttype(T)) where {T}
+    all && return describe(T, Val(:all); io)
     printstyled(io, "Interface contract for "; bold = true)
     printstyled(io, T; bold = true, color = :cyan)
     println(io)
@@ -779,6 +795,7 @@ end
     describe(T::Type, Val(:all); io::IO=stdout)
 
 Pretty-print contracts for `T`'s full supertype chain.
+Equivalent to `describe(T; all=true)`.
 """
 function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
     printstyled(io, "Full interface contract for "; bold = true)

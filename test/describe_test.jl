@@ -33,4 +33,12 @@
         @test occursin("From $(AbstractDog):", output)
         @test occursin("[invariant] speak returns a string", output)
     end
+
+    @testset "concrete type falls through to Val(:all)" begin
+        buf = IOBuffer()
+        describe(TLabrador; io = buf)
+        output = String(take!(buf))
+        @test occursin("From $(AbstractAnimal):", output)
+        @test occursin("From $(AbstractDog):", output)
+    end
 end

@@ -54,6 +54,11 @@ TypeContracts.describe(::Type{T}; io::IO) where T
 TypeContracts.describe(::Type{T}, ::Val{:all}; io::IO) where T
 ```
 
+!!! note
+    `describe(T)` on a **concrete** type automatically shows the full supertype
+    chain. `describe(T, Val(:all))` on an **abstract** type additionally walks
+    upward through its own supertypes.
+
 ## Documenter integration
 
 ```@docs
