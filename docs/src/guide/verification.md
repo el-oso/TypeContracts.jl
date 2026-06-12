@@ -1,6 +1,15 @@
 # Verification
 
-TypeContracts provides four tools for checking contract conformance. [`@verify`](@ref) and [`@verify_all`](@ref) run at precompile time and **abort module loading** on failure. [`check_contract`](@ref) throws at the call site. [`satisfies`](@ref) is non-throwing and returns a report.
+TypeContracts provides several tools for checking contract conformance, divided by *when* they run and *what* they return:
+
+| Function | When | On failure |
+|---|---|---|
+| `@verify`, `@verify_all` | Precompile time | Aborts module loading |
+| `check_contract` | Call site | Throws `InterfaceError` |
+| `satisfies` | Call site | Returns diagnostic named tuple |
+| `implements` | Test time | Returns `Bool`; errors on unregistered contract |
+
+For the test-friendly boolean helpers (`implements`, `@test_implements`), see the [Testing](testing.md) guide.
 
 ## `@verify T` — precompile-time enforcement
 
@@ -89,14 +98,21 @@ check_contract(BadShape)
 
 ## `satisfies(T, S)` — non-throwing check
 
-Returns a named tuple without throwing. Useful for conditional logic or test assertions where you want to inspect the details of a failure:
+Returns a named tuple without throwing. Useful when you need the diagnostic detail of *which* methods are missing:
 
 ```julia
 result = satisfies(Circle, AbstractShape)
 # (satisfied = true, missing_methods = [], missing_optional = ["name(::Self) :: String"])
 
-@test result.satisfied
-@test isempty(result.missing_methods)
+result.satisfied       # true
+result.missing_methods # []
+result.missing_optional # ["name(::Self) :: String"]
+```
+
+For a plain `Bool` suitable for `@test`, use [`implements`](@ref) instead:
+
+```julia
+@test implements(Circle, AbstractShape)
 ```
 
 The three fields:

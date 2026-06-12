@@ -22,6 +22,7 @@ makedocs(;
             "Defining Contracts" => "guide/contracts.md",
             "Verification" => "guide/verification.md",
             "Behavioral Testing" => "guide/behavioral.md",
+            "Testing" => "guide/testing.md",
             "Trait Dispatch" => "guide/traits.md",
             "Introspection" => "guide/introspection.md",
             "Documentation Integration" => "guide/documentation.md",

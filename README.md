@@ -1,5 +1,5 @@
 # TypeContracts.jl
-
+[![](https://img.shields.io/badge/docs-dev-blue.svg)](https://el-oso.github.io/TypeContracts.jl/dev/)
 Statically-checked interface contracts for abstract types in Julia.
 
 Define which methods every concrete subtype must implement, annotate expected return types, and have violations caught at **precompilation time** — before your code runs.
@@ -125,6 +125,12 @@ cset!(b::FloatBox, v::Float64, i::Int) = (b.data[i] = v)
 
 end # module
 ```
+
+---
+
+## Documentation
+
+Full documentation is available at **https://el-oso.github.io/TypeContracts.jl/dev/**.
 
 ---
 
