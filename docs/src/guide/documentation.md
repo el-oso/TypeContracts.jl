@@ -82,3 +82,50 @@ When `@invariants` is called after `@contract` on the same type, the contract do
 ## Precompiled packages
 
 When a package that uses TypeContracts is precompiled, `@contract` and `@invariants` run at precompile time and populate the registries. The extension is not present at precompile time, so no doc attachment happens then. When a user `using`s the package in an interactive session, the extension loads and retroactively attaches docs for all registered contracts in its `__init__`. The docs are always up-to-date for the entire interactive session.
+
+---
+
+## Documenter.jl Integration
+
+TypeContracts also integrates with [Documenter.jl](https://documenter.juliadocs.org) to bring the same contract information into your generated HTML documentation.
+
+### `contract_md_string` — zero-config `@eval` blocks
+
+[`contract_md_string`](@ref) is always available in the TypeContracts core — no extension needed. It returns the contract for `T` as a plain `String` of Markdown. Documenter renders any `String` returned from an `@eval` block as Markdown, so you can inject contract documentation at any point in a page:
+
+````markdown
+```@eval
+using TypeContracts
+TypeContracts.contract_md_string(AbstractShape)
+```
+````
+
+This is the lightest integration option: no `make.jl` changes, no auto-attachment to `@docs` blocks — just inline content where you want it.
+
+### Automatic `@docs` enhancement
+
+When `using Documenter` is in scope (i.e. in `docs/make.jl`), the `TypeContractsDocumenterExt` extension loads automatically. Its `__init__` attaches a contract section to every registered type's `Base.Docs` entry before `makedocs` runs. Standard `@docs T` blocks in your pages then show the contract section below the type's own docstring — no per-page changes needed.
+
+```julia
+# docs/make.jl — extension loads automatically with Documenter
+using MyPackage, Documenter
+makedocs(...)
+```
+
+The mechanism is identical to the REPL extension: the sentinel signature `Tuple{Val{:TypeContractsContract}}` keeps the contract section separate from the type's own docstring. Both coexist without conflict, and `@docs T` shows them together.
+
+### `contract_md` — explicit `Markdown.MD` objects
+
+[`contract_md`](@ref) returns a `Markdown.MD` object (the parsed form, suitable for Documenter's internal pipeline). It is available when the Documenter extension is loaded and returns `nothing` otherwise.
+
+```julia
+using TypeContracts, Documenter, Markdown
+
+md = TypeContracts.contract_md(AbstractShape)  # Markdown.MD
+```
+
+Most users will not need this directly — `contract_md_string` covers `@eval` use cases and auto-attachment covers `@docs` use cases.
+
+### Example: BaseTypeContracts
+
+[BaseTypeContracts.jl](https://github.com/el-oso/BaseTypeContracts.jl) uses this integration. Its `docs/make.jl` imports `Documenter`, which triggers the extension. Every Base abstract type's contract then appears inline in the generated API reference alongside the type's own documentation.

@@ -54,6 +54,13 @@ TypeContracts.describe(::Type{T}; io::IO) where T
 TypeContracts.describe(::Type{T}, ::Val{:all}; io::IO) where T
 ```
 
+## Documenter integration
+
+```@docs
+TypeContracts.contract_md_string
+TypeContracts.contract_md
+```
+
 ## Types
 
 ```@docs
