@@ -3,8 +3,9 @@ module TypeContracts
 using InteractiveUtils: supertypes
 
 export @contract, @verify, @verify_all, @invariants, @delegate,
-    check_contract, satisfies, list_contract, registered_contracts,
-    test_behavior, list_behaviors, registered_behaviors,
+    @test_implements, @test_behavior_passes,
+    check_contract, satisfies, implements, list_contract, registered_contracts,
+    test_behavior, behavior_passes, list_behaviors, registered_behaviors,
     describe, interface_trait,
     Self, TypeParamRef, InterfaceError, MethodSpec, BehaviorSpec,
     Implemented, NotImplemented
@@ -408,6 +409,161 @@ Return behavioral invariants registered directly for type `T`.
 """
 function list_behaviors(T::Type)::Vector{BehaviorSpec}
     return _behavior_specs(T)
+end
+
+# ── Public API: Testing helpers ───────────────────────────────────────
+
+"""
+    implements(T::Type, S::Type; include_optional::Bool=false) -> Bool
+
+Return `true` if `T` satisfies the structural contract for `S` (method existence
+and return types). Errors if `S` has no registered contract. Designed for direct
+use with `@test`:
+
+```julia
+@test implements(Circle, AbstractShape)
+@test implements(Circle, AbstractShape; include_optional=true)
+```
+
+Pass `include_optional=true` to also require all optional methods.
+
+See also: [`satisfies`](@ref) for the full diagnostic result, [`implements(T)`](@ref)
+to check all applicable contracts at once.
+"""
+function implements(T::Type, S::Type; include_optional::Bool = false)::Bool
+    isempty(_contract_specs(_registry_key(S))) &&
+        throw(ArgumentError("no contract registered for $S"))
+    r = satisfies(T, S)
+    include_optional || return r.satisfied
+    return r.satisfied && isempty(r.missing_optional)
+end
+
+"""
+    implements(T::Type; include_optional::Bool=false) -> Bool
+
+Return `true` if `T` satisfies all contracts in its supertype chain. Errors if
+no contracts are found (likely a wrong type or a missing `@contract` call):
+
+```julia
+@test implements(Circle)
+@test implements(Circle; include_optional=true)
+```
+
+Pass `include_optional=true` to also require all optional methods across every
+applicable contract.
+
+See also: [`implements(T, S)`](@ref) for a single contract, [`check_contract`](@ref)
+for the compile-time throwing version.
+"""
+function implements(T::Type; include_optional::Bool = false)::Bool
+    applicable_contracts = Type[]
+    for S in supertypes(T)
+        isempty(_contract_specs(_registry_key(S))) || push!(applicable_contracts, S)
+    end
+    isempty(applicable_contracts) &&
+        throw(ArgumentError("no contracts registered for any supertype of $T"))
+    for S in applicable_contracts
+        implements(T, S; include_optional) || return false
+    end
+    return true
+end
+
+"""
+    behavior_passes(T::Type, objects; S=nothing, include_optional=false) -> Bool
+
+Return `true` if all mandatory behavioral invariants for `T`'s supertype chain
+pass against `objects`. Designed for direct use with `@test`:
+
+```julia
+@test behavior_passes(Counter, [Counter(0), Counter(5)])
+@test behavior_passes(Counter, [Counter(0)]; S=AbstractCounter)
+@test behavior_passes(Counter, [Counter(0)]; include_optional=true)
+```
+
+Pass `S` to test only the invariants registered for a specific interface.
+Pass `include_optional=true` to require optional invariants as well.
+"""
+function behavior_passes(
+    ::Type{T},
+    objects;
+    S::Union{Type, Nothing} = nothing,
+    include_optional::Bool = false,
+)::Bool where {T}
+    r = isnothing(S) ? test_behavior(T, objects) : test_behavior(T, S, objects)
+    include_optional || return r.passed
+    return all(res -> res.passed, r.results)
+end
+
+"""
+    @test_implements T S
+
+Assert that `T` satisfies the structural contract for `S`, integrating with
+the active `Test.@testset`. On failure, prints the list of missing methods
+before recording the test failure. Requires `using Test` at the call site.
+
+```julia
+using Test, TypeContracts
+@test_implements Circle AbstractShape
+```
+"""
+macro test_implements(T_expr, S_expr)
+    T_str = string(T_expr)
+    S_str = string(S_expr)
+    r = gensym("r")
+    m = gensym("m")
+    # esc(quote …) disables hygiene so @test resolves in the caller's module;
+    # gensyms prevent local variable collisions with caller scope.
+    return esc(quote
+        let $r = TypeContracts.satisfies($T_expr, $S_expr)
+            if !$r.satisfied
+                printstyled(
+                    stderr,
+                    "\n  @test_implements ", $T_str, " ", $S_str, " — missing methods:\n";
+                    bold = true, color = :red,
+                )
+                for $m in $r.missing_methods
+                    printstyled(stderr, "    • ", $m, "\n"; color = :light_black)
+                end
+            end
+            @test $r.satisfied
+        end
+    end)
+end
+
+"""
+    @test_behavior_passes T objects
+
+Assert that all mandatory behavioral invariants for `T`'s supertype chain pass
+against `objects`, integrating with the active `Test.@testset`. On failure,
+prints which invariants failed before recording the test failure.
+Requires `using Test` at the call site.
+
+```julia
+using Test, TypeContracts
+@test_behavior_passes Counter [Counter(0), Counter(5)]
+```
+"""
+macro test_behavior_passes(T_expr, objs_expr)
+    T_str = string(T_expr)
+    r = gensym("r")
+    f = gensym("f")
+    return esc(quote
+        let $r = TypeContracts.test_behavior($T_expr, $objs_expr)
+            if !$r.passed
+                printstyled(
+                    stderr,
+                    "\n  @test_behavior_passes ", $T_str, " — failed invariants:\n";
+                    bold = true, color = :red,
+                )
+                for $f in $r.mandatory_failures
+                    printstyled(stderr, "    • ", $f.description, "\n"; color = :light_black)
+                    isempty($f.error) ||
+                        printstyled(stderr, "      error: ", $f.error, "\n"; color = :light_black)
+                end
+            end
+            @test $r.passed
+        end
+    end)
 end
 
 # ── Public API: Holy Trait Dispatch ───────────────────────────────────

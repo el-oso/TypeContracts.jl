@@ -20,6 +20,16 @@ TypeContracts.list_contract(::Type, ::Val{:all})
 TypeContracts.registered_contracts
 ```
 
+## Testing helpers
+
+```@docs
+TypeContracts.implements(::Type, ::Type)
+TypeContracts.implements(::Type)
+TypeContracts.behavior_passes
+TypeContracts.@test_implements
+TypeContracts.@test_behavior_passes
+```
+
 ## Behavioral testing
 
 ```@docs
