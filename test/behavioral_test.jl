@@ -76,4 +76,24 @@
         @test !startswith(sprint(show, mandatory_spec), "[optional]")
         @test startswith(sprint(show, optional_spec), "[optional]")
     end
+
+    @testset "behavior_passes returns Bool for @test" begin
+        @test behavior_passes(TCounter, [TCounter(0), TCounter(5)])
+        @test !behavior_passes(TBrokenCounter, [TBrokenCounter(0)])
+    end
+
+    @testset "behavior_passes with S targets specific interface" begin
+        @test behavior_passes(TCounter, [TCounter(1)]; S = AbstractCounter)
+        @test !behavior_passes(TBrokenCounter, [TBrokenCounter(0)]; S = AbstractCounter)
+    end
+
+    @testset "behavior_passes include_optional requires optional invariants" begin
+        @test behavior_passes(TCounter, [TCounter(1)])
+        # TBrokenCounter fails mandatory invariants regardless of include_optional
+        @test !behavior_passes(TBrokenCounter, [TBrokenCounter(0)]; include_optional = true)
+    end
+
+    @testset "@test_behavior_passes passes for correct implementation" begin
+        @test_behavior_passes TCounter [TCounter(0), TCounter(5)]
+    end
 end

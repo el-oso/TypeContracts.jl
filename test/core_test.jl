@@ -82,4 +82,34 @@
     @testset "multi-arg with mixed types" begin
         @test check_contract(TBox).passed
     end
+
+    @testset "implements(T, S) returns Bool for @test" begin
+        @test implements(TCircle, AbstractShape)
+        @test !implements(TSquare, AbstractShape)
+        @test implements(TJSONSerializer, AbstractSerializer)
+    end
+
+    @testset "implements(T, S) errors for unregistered contract" begin
+        @test_throws ArgumentError implements(TCircle, Real)
+    end
+
+    @testset "implements(T, S) include_optional requires optional methods too" begin
+        @test implements(TCircle, AbstractShape)
+        @test !implements(TCircle, AbstractShape; include_optional = true)  # missing shape_color
+        @test implements(TJSONSerializer, AbstractSerializer; include_optional = true)
+    end
+
+    @testset "implements(T) checks all supertype contracts" begin
+        @test implements(TCircle)
+        @test !implements(TSquare)
+    end
+
+    @testset "implements(T) errors for type with no contracts" begin
+        struct TPlain end
+        @test_throws ArgumentError implements(TPlain)
+    end
+
+    @testset "@test_implements passes for conforming type" begin
+        @test_implements TCircle AbstractShape
+    end
 end
