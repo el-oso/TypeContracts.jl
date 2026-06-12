@@ -18,17 +18,17 @@ function _build_contract_markdown(::Type{T}) where {T}
     println(io, "# TypeContracts Interface")
     println(io)
 
-    desc = get(TypeContracts._descriptions, T, "")
+    desc = TypeContracts._contract_desc(T)
     isempty(desc) || (println(io, desc); println(io))
 
-    specs = get(TypeContracts._registry, T, nothing)
-    if !isnothing(specs)
+    specs = TypeContracts._contract_specs(T)
+    if !isempty(specs)
         _md_method_block(io, "Mandatory methods", filter(s -> !s.optional, specs))
         _md_method_block(io, "Optional methods", filter(s -> s.optional, specs))
     end
 
-    behaviors = get(TypeContracts._behaviors, T, nothing)
-    if !isnothing(behaviors)
+    behaviors = TypeContracts._behavior_specs(T)
+    if !isempty(behaviors)
         _md_behavior_block(io, "Behavioral invariants", filter(b -> !b.optional, behaviors))
         _md_behavior_block(io, "Optional invariants", filter(b -> b.optional, behaviors))
     end
@@ -87,15 +87,28 @@ end
 TypeContracts._attach_contract_doc(::TypeContracts._DocSyncHook, ::Type{T}) where {T} =
     (_attach_doc(T); nothing)
 
+function _registered_type(m::Method)
+    p = m.sig.parameters
+    length(p) == 2 || return nothing
+    p[2] isa DataType && p[2].name.name === :Type || return nothing
+    isempty(p[2].parameters) && return nothing
+    T = p[2].parameters[1]
+    return T isa Type ? T : nothing
+end
+
 function __init__()
     # Retroactively attach docs for every contract registered before this
     # extension loaded (e.g. package contracts registered at their own load time).
     seen = Set{Type}()
-    for T in keys(TypeContracts._registry)
+    for m in methods(TypeContracts._contract_specs)
+        T = _registered_type(m)
+        T === nothing && continue
         push!(seen, T)
         _attach_doc(T)
     end
-    for T in keys(TypeContracts._behaviors)
+    for m in methods(TypeContracts._behavior_specs)
+        T = _registered_type(m)
+        T === nothing && continue
         T in seen || _attach_doc(T)
     end
     return

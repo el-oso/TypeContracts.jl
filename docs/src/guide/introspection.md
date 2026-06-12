@@ -111,7 +111,7 @@ Each [`BehaviorSpec`](@ref) has:
 
 ## `registered_contracts()` and `registered_behaviors()`
 
-Return copies of the global registry dictionaries — useful for tooling, documentation generators, or diagnostic scripts:
+Return all registered contracts and behaviors as dictionaries — useful for tooling, documentation generators, or diagnostic scripts. Intended for interactive/REPL use:
 
 ```julia
 registered_contracts()
