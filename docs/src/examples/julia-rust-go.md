@@ -17,7 +17,7 @@ development** without recompiling.
 
 ---
 
-## 1 · Default / Optional Method Behaviour
+## 1 · Default / Optional Method Behavior
 
 Provide a fallback implementation that implementors can skip or override.
 
@@ -28,8 +28,8 @@ abstract type Animal end
 function speak end
 function describe end
 
-@contract Animal "An entity that can vocalise." begin
-    speak(::Self)    :: String => "primary vocalisation"
+@contract Animal "An entity that can vocalize." begin
+    speak(::Self)    :: String => "primary vocalization"
     :optional
     describe(::Self) :: String => "human-readable label"
 end
@@ -75,7 +75,7 @@ impl Animal for Dog {
 type Animal interface {
     Speak() string
     // Go interfaces cannot have default method bodies.
-    // Optional or shared behaviour needs a separate mechanism.
+    // Optional or shared behavior needs a separate mechanism.
 }
 
 // Common pattern: an embedded base struct provides defaults.
@@ -101,7 +101,7 @@ func (d Dog) Speak() string { return "woof" }
     other direction: the optional/required distinction is **machine-readable** via `satisfies()`,
     `describe(T)`, and `?`-docs. Rust has no type-level query for "which methods have defaults."
 
-    Go has neither: no default bodies, no optional/required distinction — shared behaviour lives
+    Go has neither: no default bodies, no optional/required distinction — shared behavior lives
     in an embedded base struct, outside the interface contract and invisible to tooling.
 
 ---
@@ -212,7 +212,7 @@ satisfies(MyFancySet, AbstractSet)  # lists missing methods
 // Orphan rule: you can implement a foreign trait for a
 // foreign type only if at least one is defined in your crate.
 
-// To formalise set operations you must define a new trait:
+// To formalize set operations you must define a new trait:
 trait SetOps {
     fn intersect(&self, other: &Self) -> Self;
     fn union(&self, other: &Self)     -> Self;
@@ -266,7 +266,7 @@ Branch on whether a type satisfies an interface — statically, with zero runtim
 ```julia
 using TypeContracts, BaseTypeContracts
 
-# interface_trait is @generated — registry read at specialisation
+# interface_trait is @generated — registry read at specialization
 # time; result baked into static IR. juliac --trim safe.
 function process(x::T) where T
     _process(x, interface_trait(Iterable, T))
@@ -283,12 +283,12 @@ process(42)       # NotImplemented path — zero-overhead dispatch
 ```rust
 // Static dispatch via trait bounds (positive case only).
 fn process<T: IntoIterator>(x: T) -> Vec<T::Item> {
-    x.into_iter().collect()   // monomorphised per T at compile time
+    x.into_iter().collect()   // monomorphized per T at compile time
 }
 
 // Two-branch design (any T, fallback for non-iterables) is not
 // expressible in stable Rust:
-// — specialisation is nightly-only
+// — specialization is nightly-only
 // — negative trait bounds are unstable
 // The canonical stable approach: two separate functions
 // with different bounds, or a runtime enum/Any approach.
@@ -400,7 +400,7 @@ type Logged struct {
     NOps int
 }
 
-// Override only what you want to customise:
+// Override only what you want to customize:
 func (l *Logged) Store(k string, v int) {
     l.NOps++
     l.MapStore.Store(k, v)
@@ -503,7 +503,7 @@ Generate method bodies from type information for zero-overhead static dispatch.
 
 ```julia
 # interface_trait is @generated — the registry is read at
-# specialisation time and the body emitted as a static chain
+# specialization time and the body emitted as a static chain
 # of hasmethod() calls. juliac --trim safe.
 @generated function interface_trait(::Type{I}, ::Type{T}) where {I,T}
     specs = get(_registry, I, nothing)
@@ -525,7 +525,7 @@ end
 #### Rust
 
 ```rust
-// All generics are monomorphised at compile time — one machine-code
+// All generics are monomorphized at compile time — one machine-code
 // copy per concrete (fn, T) pair, automatic.
 fn process<T: Iterator>(iter: T) -> Vec<T::Item> {
     iter.collect()
@@ -549,7 +549,7 @@ impl_display!(u8, u16, u32, u64);
 #### Go
 
 ```go
-// Go 1.18+ generics monomorphise at compile time.
+// Go 1.18+ generics monomorphize at compile time.
 func Map[T, U any](s []T, f func(T) U) []U {
     out := make([]U, len(s))
     for i, v := range s { out[i] = f(v) }
@@ -565,12 +565,12 @@ const (North Direction = iota; South; East; West)
 
 // Go generics are intentionally limited: the generic body is
 // constrained to what the type constraint permits; no registry
-// lookup or arbitrary IR generation at specialisation time.
+// lookup or arbitrary IR generation at specialization time.
 ```
 
 !!! tip "Verdict — TC most powerful; Rust automatic"
-    Julia's `@generated` runs full Julia at specialisation time: read registries, inspect the type
-    system, emit arbitrary IR — the most powerful of the three. Rust's monomorphisation is
+    Julia's `@generated` runs full Julia at specialization time: read registries, inspect the type
+    system, emit arbitrary IR — the most powerful of the three. Rust's monomorphization is
     automatic for all generics and its procedural macros are powerful but operate on token streams,
     not types. Go generics are intentionally limited: the body must be valid for all types
     satisfying the constraint, and `go generate` is a separate build step entirely outside the
@@ -744,7 +744,7 @@ func Store[T Numeric](ds *DataStore, key string, val T) {
 | 4 | Type-level dispatch | `interface_trait` → static two-branch, trim-safe | trait bound (positive only; negative unstable) | runtime type switch only | TC advantage |
 | 5 | Delegation | `@delegate Wrapper :field Interface` — generates + verifies | manual `impl Trait`, every method by hand | struct embedding — all methods promoted automatically | Go best; TC close |
 | 6 | Behavioral invariants | `@invariants` + `test_behavior` — part of interface | structural only; laws in docs/external tests | structural only; laws in docs/external tests | TC unique |
-| 7 | Compile-time codegen | `@generated` — full Julia at specialisation time | automatic monomorphisation; procedural macros on tokens | generic monomorphisation; `go generate` is external | TC most powerful; Rust automatic |
+| 7 | Compile-time codegen | `@generated` — full Julia at specialization time | automatic monomorphization; procedural macros on tokens | generic monomorphization; `go generate` is external | TC most powerful; Rust automatic |
 | 8 | Parametric constraints | `@contract AbstractType{T}`; T resolved + return types verified | generic traits + associated types + const generics | generic interfaces; no const generics | three-way tie |
 | 9 | Interface-gated methods | `interface_trait` + `InterfaceError` (load/runtime) | `where T: Trait` (compile-time) | union constraint; compile-time; no method requirements | Rust/TC tie; Go close |
 | — | Live re-checking | Revise.jl — re-checks all registered types after each edit, warns without throwing | enforced on every build | enforced on every build; `var _ I = T{}` | TC differentiator |
