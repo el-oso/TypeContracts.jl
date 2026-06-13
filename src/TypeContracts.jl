@@ -313,9 +313,9 @@ Verify that `T` satisfies all **mandatory** contracts for its supertype chain.
 Checks both method existence and declared return types (via Julia's type inferencer).
 Optional methods are skipped. Throws `InterfaceError` on failure.
 
-This is a precompile-time tool. `Base.return_types` is called here and requires
-Julia's type inference machinery — use via `@verify` / `@verify_all` at module
-load time, not in Juliac-compiled binaries at runtime.
+Uses `Base.return_types` internally. Do not call from functions that run at
+binary runtime — use `@verify` / `@verify_all` at module top level instead,
+where the trimmer eliminates it before the binary is produced.
 """
 function check_contract(T::Type)
     errors = String[]
@@ -481,7 +481,7 @@ end
 Non-throwing check. Returns `(satisfied, missing_methods, missing_optional)`.
 `satisfied` is true when all mandatory methods are present and return types match.
 
-Precompile-time tool — uses `Base.return_types` for return type checking.
+Uses `Base.return_types` — do not call from functions that run at binary runtime.
 """
 function satisfies(T::Type, S::Type)
     specs = _contract_specs(_registry_key(S))
@@ -1205,7 +1205,14 @@ end
 
 Assert at module-load / precompile time that `ConcreteType` satisfies all
 mandatory contracts for its supertype chain. Checks both method existence
-and declared return types.
+and declared return types (via `Base.return_types`).
+
+**juliac / trim binaries:** `@verify` at module top level is safe. It runs
+during Julia's precompilation step (before the native binary is produced) and
+is not re-executed at binary runtime. The trimmer eliminates it automatically
+because it is unreachable from any entry point. Do not call `@verify` (or
+`check_contract`) inside a function that runs at binary runtime — that would
+embed a `Base.return_types` call in the runtime call graph.
 
 With `trim_compat=true`, also runs `check_trim_compat(ConcreteType)` to scan
 the typed IR of each mandatory method for known trim-unsafe calls

@@ -48,7 +48,10 @@ end # module
 2. **Return type** — `Base.return_types(f, sig)` must produce a type `<: declared_type` for every mandatory spec with a declared return type.
 
 !!! note
-    `@verify` uses `Base.return_types`, which requires Julia's type-inference machinery. It is a precompile/load-time tool, not suitable for use inside a juliac-compiled binary at runtime. Use [`interface_trait`](@ref) for runtime checks.
+    `@verify` at module top level is fully compatible with `juliac --trim`. It runs
+    during precompilation and is eliminated by the trimmer before the binary is produced.
+    Do not call `@verify` or `check_contract` inside a function that runs at binary
+    runtime — that would embed a `Base.return_types` call in the runtime call graph.
 
 ## `@verify_all` — bulk enforcement
 
