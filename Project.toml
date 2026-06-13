@@ -10,10 +10,12 @@ InteractiveUtils = "b77e0a4c-d291-57a0-90e8-8db25a27a240"
 REPL = "3fa0cd96-eef1-5676-8a61-b3b8758bbffb"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 Markdown = "d8793406-c6a3-41b5-adea-2c8d43ad1978"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
 
 [extensions]
 TypeContractsREPLExt = "REPL"
 TypeContractsDocumenterExt = ["Documenter", "Markdown"]
+TypeContractsReviseExt = "Revise"
 
 [compat]
 julia = "1.9"

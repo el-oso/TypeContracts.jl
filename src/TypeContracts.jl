@@ -166,6 +166,10 @@ Base.show(io::IO, ::NotImplemented{I}) where {I} = print(io, "NotImplemented{$I}
 
 const _registry = Dict{Type, Vector{MethodSpec}}()
 
+# Types and modules registered for live re-checking by the Revise extension.
+const _revise_tracked_types = Set{Type}()
+const _revise_tracked_modules = Set{Module}()
+
 """
     _contract_specs(::Type{T}) -> Vector{MethodSpec}
 
@@ -359,6 +363,30 @@ function check_contract(T::Type)
     end
 
     return (type = T, contracts = checked, passed = true)
+end
+
+# Non-throwing variant used by the Revise extension after live edits.
+function _check_contract_warn(T::Type)
+    return try
+        check_contract(T)
+    catch e
+        e isa InterfaceError &&
+            @warn "Contract violation detected by Revise" type = T msg = e.msg
+    end
+end
+
+# Re-check all concrete subtypes of registered contracts in `mod`, warning on failure.
+function _revise_check_module(mod::Module)
+    for name in names(mod; all = true)
+        isdefined(mod, name) || continue
+        val = getfield(mod, name)
+        val isa Type || continue
+        isabstracttype(val) && continue
+        parentmodule(val) === mod || continue
+        any(S -> !isempty(_contract_specs(_registry_key(S))), supertypes(val)) || continue
+        _check_contract_warn(val)
+    end
+    return
 end
 
 # ── Trim-compatibility check ───────────────────────────────────────────
@@ -1231,6 +1259,7 @@ macro verify(T, kwargs...)
     end
     return quote
         let _verify_result = TypeContracts.check_contract($(esc(T)))
+            push!(TypeContracts._revise_tracked_types, $(esc(T)))
             $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)))
             _verify_result
         end
@@ -1279,7 +1308,10 @@ macro verify_all(kwargs...)
         end
     end
     return quote
-        TypeContracts._verify_all_in_module(@__MODULE__; trim_compat = $(trim_compat))
+        let _r = TypeContracts._verify_all_in_module(@__MODULE__; trim_compat = $(trim_compat))
+            push!(TypeContracts._revise_tracked_modules, @__MODULE__)
+            _r
+        end
     end
 end
 
