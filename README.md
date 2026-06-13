@@ -1,5 +1,6 @@
 # TypeContracts.jl
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://el-oso.github.io/TypeContracts.jl/dev/)
+
 Statically-checked interface contracts for abstract types in Julia.
 
 Define which methods every concrete subtype must implement, annotate expected return types, and have violations caught at **precompilation time** — before your code runs.
@@ -29,7 +30,7 @@ Behavioral invariants (property-based testing on real objects) are also supporte
 
 **Precompile-time enforcement.** `@verify` and `@verify_all` run when the module is loaded/precompiled, not at runtime. Return type checking calls Julia's type inferencer (`Base.return_types`) and therefore requires Julia's JIT machinery — it is a precompilation tool, not a runtime assertion.
 
-**`interface_trait` is runtime-safe.** The Holy Trait dispatch helper (`interface_trait`) uses only `hasmethod` and is safe to call in Juliac-compiled binaries at runtime.
+**`interface_trait` is runtime-safe.** The Holy Trait dispatch helper (`interface_trait`) uses only `hasmethod` and is safe to call in Juliac-compiled binaries at runtime. Use `@verify T trim_compat=true` to also check that the concrete methods implementing a contract are free of trim-unsafe calls.
 
 **Abstract types only.** `@contract` requires its target to be an abstract type.
 
@@ -141,8 +142,11 @@ Full documentation is available at **https://el-oso.github.io/TypeContracts.jl/d
 | `@contract T begin ... end` | Register a contract for abstract type `T` |
 | `@contract T{A,B} begin ... end` | Register a parametric contract with type variables `A`, `B` |
 | `@verify T` | Assert at load time that `T` satisfies all mandatory contracts |
+| `@verify T trim_compat=true` | Also scan each contract method's IR for trim-unsafe calls (`Base.return_types`, etc.) — emits `@warn` |
 | `@verify_all` | Assert all concrete subtypes in the calling module satisfy their contracts |
+| `@verify_all trim_compat=true` | Same trim scan applied to every verified type |
 | `check_contract(T)` | Throws `InterfaceError` if `T` is non-conforming |
+| `check_trim_compat(T)` | Advisory IR scan for trim-unsafe calls in `T`'s contract methods — warns, does not throw |
 | `satisfies(T, S)` | Non-throwing check; returns `(satisfied, missing_methods, missing_optional)` |
 | `list_contract(T)` | Returns `Vector{MethodSpec}` registered for `T` |
 | `list_contract(T, Val(:all))` | Returns contracts for `T`'s full supertype chain |

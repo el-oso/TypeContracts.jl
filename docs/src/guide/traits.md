@@ -153,6 +153,32 @@ on `Implemented{I}` / `NotImplemented{I}`.
 | `contract_md_string` | — doc tool | Documenter `@eval` blocks |
 | `test_behavior` | — test tool | Behavioral test suites |
 
+### Checking your implementations with `@verify`
+
+`@verify T trim_compat=true` runs `check_trim_compat(T)` immediately after the
+normal `check_contract` pass. For each mandatory contract method it:
+
+1. Calls `Base.code_typed(f, concrete_sig; optimize=false)` to get the typed IR
+2. Walks the IR statements looking for calls to known trim-unsafe functions:
+   `Base.return_types`, `Base.invokelatest`, `Base.which`, `Base.methods`
+3. Emits `@warn` for any found — does not throw, since trim-safety is advisory
+
+This is a **shallow scan**: it inspects only the top-level method body, not callees.
+For exhaustive verification use `TrimCheck.@validate`.
+
+```julia
+@verify Circle trim_compat=true   # warns if area(::Circle) calls return_types etc.
+@verify_all trim_compat=true      # applies the check to every verified type
+
+# Standalone check
+result = check_trim_compat(Circle)
+result.passed     # true if no issues found
+result.issues     # Dict{Type, Vector{String}} — issues grouped by contract type
+```
+
+`check_trim_compat` itself has zero runtime overhead: it runs at module load time
+(same as `@verify`) and emits no code into the precompiled image.
+
 ### No manual opt-out needed
 
 The documentation and doc-attachment machinery lives entirely in package extensions:
