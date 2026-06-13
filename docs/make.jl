@@ -30,6 +30,7 @@ makedocs(;
         ],
         "Examples" => [
             "Nine Ways to Structure Interfaces" => "examples/nine-ways.md",
+            "Julia + TypeContracts vs Rust vs Go" => "examples/julia-rust-go.md",
         ],
         "Reference" => [
             "API Reference" => "reference/api.md",
