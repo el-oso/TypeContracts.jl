@@ -19,6 +19,7 @@ Julia has no built-in mechanism to enforce that a concrete type implements the m
 | Parametric type variables in signatures | `@contract AbstractType{T} begin ... end` — `T` resolves at check time |
 | Discover what an interface requires | `describe(T)`, `list_contract(T)`, `satisfies(T, S)` |
 | Enforce conformance at precompile time | `@verify T` / `@verify_all` — fail to load if a method is missing or returns the wrong type |
+| Live re-checking during development | Revise.jl extension — re-checks contracts after each edit cycle, warns instead of throwing |
 
 Behavioral invariants (property-based testing on real objects) are also supported via `@invariants` and `test_behavior`.
 
@@ -31,6 +32,8 @@ Behavioral invariants (property-based testing on real objects) are also supporte
 **Precompile-time enforcement.** `@verify` and `@verify_all` run when the module is precompiled — before the native binary is produced — not at binary runtime. They use `Base.return_types` internally, but the trimmer eliminates them automatically because they are unreachable from any entry point. Leave `@verify` at module top level as normal; you do not need to remove it for juliac builds.
 
 **`interface_trait` is the only runtime function.** The Holy Trait dispatch helper uses only `hasmethod` and is safe to call in Juliac-compiled binaries at runtime. Use `@verify T trim_compat=true` to also check that your implementation methods are free of trim-unsafe calls.
+
+**Revise re-checking is advisory.** The Revise extension emits `@warn` after each edit cycle for any registered type or module that violates its contract. It does not throw, so the REPL session stays alive. Activate by loading `Revise` before `TypeContracts`.
 
 **Abstract types only.** `@contract` requires its target to be an abstract type.
 

@@ -26,6 +26,7 @@ makedocs(;
             "Trait Dispatch" => "guide/traits.md",
             "Introspection" => "guide/introspection.md",
             "Documentation Integration" => "guide/documentation.md",
+            "Revise Integration" => "guide/revise.md",
         ],
         "Examples" => [
             "Nine Ways to Structure Interfaces" => "examples/nine-ways.md",
