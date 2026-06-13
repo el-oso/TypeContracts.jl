@@ -24,10 +24,6 @@ Provide a fallback implementation that implementors can skip or override.
 #### Julia + TypeContracts
 
 ```julia
-abstract type Animal end
-function speak end
-function describe end
-
 @contract Animal "An entity that can vocalize." begin
     speak(::Self)    :: String => "primary vocalization"
     :optional
@@ -113,11 +109,11 @@ Build capability levels where satisfying the child requires the parent.
 #### Julia + TypeContracts
 
 ```julia
+# The supertype chain must be declared first so each type can reference its parent.
+# @contract auto-generates function stubs (area, perimeter, side_length):
 abstract type Shape end
 abstract type Polygon        <: Shape   end
 abstract type RegularPolygon <: Polygon end
-
-function area end; function perimeter end; function side_length end
 
 @contract Shape          begin; area(::Self)        :: Float64; end
 @contract Polygon        begin; perimeter(::Self)   :: Float64; end
@@ -328,9 +324,6 @@ Wrap a type, forward its interface, verify the delegation is complete.
 #### Julia + TypeContracts
 
 ```julia
-abstract type Store end
-function store! end; function fetch end
-
 @contract Store begin
     store!(::Self, ::Int) :: Nothing
     fetch(::Self)         :: Int
@@ -585,9 +578,6 @@ Contracts that involve the implementing type's own type parameters.
 #### Julia + TypeContracts
 
 ```julia
-abstract type AbstractContainer{T} end
-function cget end; function cset! end; function clength end
-
 @contract AbstractContainer{T} begin
     cget(::Self, ::Int)       :: T => "element at index"
     cset!(::Self, ::T, ::Int)    => "set element at index"
