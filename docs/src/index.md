@@ -33,6 +33,9 @@ features:
   - title: Holy trait dispatch
     icon: ⚡
     details: "interface_trait(I, T) returns Implemented{I}() or NotImplemented{I}() for efficient multiple-dispatch patterns. juliac-compatible — uses only hasmethod at runtime."
+  - title: Revise integration
+    icon: 🔄
+    details: "Load Revise alongside TypeContracts and contract conformance is re-checked automatically after each edit cycle, with warnings instead of errors so the REPL session stays alive."
 ---
 ```
 

@@ -53,6 +53,9 @@ end # module
     Do not call `@verify` or `check_contract` inside a function that runs at binary
     runtime — that would embed a `Base.return_types` call in the runtime call graph.
 
+!!! tip "Live re-checking with Revise"
+    When [Revise.jl](https://github.com/timholy/Revise.jl) is loaded alongside TypeContracts, every type registered with `@verify` and every module registered with `@verify_all` is re-checked automatically after each edit cycle. Violations appear as warnings so the REPL session stays alive. See [Revise Integration](revise.md) for details.
+
 ## `@verify_all` — bulk enforcement
 
 Place `@verify_all` once at the end of your module, after all type and method definitions. It discovers every concrete subtype of a registered contract type that was defined in the calling module and verifies each one.
