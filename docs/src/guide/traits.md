@@ -117,37 +117,44 @@ Every other TypeContracts function — `check_contract`, `satisfies`, `describe`
 run at normal world ages where method dispatch works correctly. They never touch
 `_registry` directly.
 
-### Why other functions are not trim-safe
+### `@verify` and juliac binaries
 
-**`check_contract`, `satisfies`, `implements`** all call `Base.return_types`.
-Return type checking requires Julia's type inferencer, which is part of the Julia
-runtime and is **not available in a trimmed binary**. These functions are designed
-for precompile time and test time, not for runtime use in a static binary.
+`@verify` and `@verify_all` at **module top level** are safe in a juliac binary.
+They run during Julia's precompilation step — before the native binary is produced —
+and are not re-executed at binary runtime. The trimmer automatically eliminates them
+because they are unreachable from any declared entry point.
 
-**`@verify`, `@verify_all`** run at module load/precompile time by design. They also
-call `Base.return_types`. They will never appear in a user's runtime call path.
+The only unsafe pattern is calling `@verify` or `check_contract` **inside a function
+that runs at binary runtime** (e.g. an entry point, or inside `__init__`). That would
+embed `Base.return_types` in the runtime call graph. Use `@verify` at module top level
+only, which is the normal way to use it.
 
-**`describe`, `list_contract`, `contract_md_string`** do not call `Base.return_types`,
-so they are technically trim-compatible in isolation. However, they are introspection
-and documentation tools. There is no sensible reason to call them at runtime in a
-static binary — they exist for development-time exploration and documentation
-generation. Treat them as precompile-time tools.
+### Why some functions cannot be called at runtime in a trimmed binary
+
+**`check_contract`, `satisfies`, `implements`** call `Base.return_types`, which
+requires Julia's type inferencer — not available in a trimmed binary. These are test
+and precompile-time tools only. Do not call them from functions that run at binary
+runtime.
+
+**`describe`, `list_contract`, `contract_md_string`** do not call `Base.return_types`
+so they are trim-compatible in isolation, but they are development and documentation
+tools. There is no sensible reason to call them at runtime in a static binary.
 
 **`contract_md`** requires the `Documenter` extension, which is never loaded in a
 juliac binary. Without the extension it returns `nothing` via a no-op dispatch hook.
 
-### What to call at runtime in a trimmed binary
+### Summary: what to call at runtime in a trimmed binary
 
 The answer is: **only `interface_trait`**, plus your own dispatch methods that branch
 on `Implemented{I}` / `NotImplemented{I}`.
 
-| Function | Trim-safe? | When to use |
+| Function | Trim-safe at runtime? | Notes |
 |---|---|---|
 | `interface_trait` | ✓ Yes | Runtime dispatch in trimmed binary |
-| `@verify`, `@verify_all` | — precompile only | Module load / `__init__` |
-| `check_contract` | ✗ No (`Base.return_types`) | Test time |
-| `satisfies` | ✗ No (`Base.return_types`) | Test time |
-| `implements` | ✗ No (`Base.return_types`) | Test time |
+| `@verify`, `@verify_all` | ✓ Yes (module top level) | Eliminated by trimmer; safe to leave in |
+| `check_contract` | ✗ No (`Base.return_types`) | Test time only |
+| `satisfies` | ✗ No (`Base.return_types`) | Test time only |
+| `implements` | ✗ No (`Base.return_types`) | Test time only |
 | `describe` | — doc tool | REPL / development |
 | `list_contract` | — doc tool | REPL / development |
 | `contract_md_string` | — doc tool | Documenter `@eval` blocks |

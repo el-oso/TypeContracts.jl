@@ -28,9 +28,9 @@ Behavioral invariants (property-based testing on real objects) are also supporte
 
 **Closed-world.** TypeContracts works under the closed-world assumption: all types and methods are known at precompilation time. Dynamic code loading (`eval`, `invokelatest`) is excluded from the guarantee scope.
 
-**Precompile-time enforcement.** `@verify` and `@verify_all` run when the module is loaded/precompiled, not at runtime. Return type checking calls Julia's type inferencer (`Base.return_types`) and therefore requires Julia's JIT machinery — it is a precompilation tool, not a runtime assertion.
+**Precompile-time enforcement.** `@verify` and `@verify_all` run when the module is precompiled — before the native binary is produced — not at binary runtime. They use `Base.return_types` internally, but the trimmer eliminates them automatically because they are unreachable from any entry point. Leave `@verify` at module top level as normal; you do not need to remove it for juliac builds.
 
-**`interface_trait` is runtime-safe.** The Holy Trait dispatch helper (`interface_trait`) uses only `hasmethod` and is safe to call in Juliac-compiled binaries at runtime. Use `@verify T trim_compat=true` to also check that the concrete methods implementing a contract are free of trim-unsafe calls.
+**`interface_trait` is the only runtime function.** The Holy Trait dispatch helper uses only `hasmethod` and is safe to call in Juliac-compiled binaries at runtime. Use `@verify T trim_compat=true` to also check that your implementation methods are free of trim-unsafe calls.
 
 **Abstract types only.** `@contract` requires its target to be an abstract type.
 
