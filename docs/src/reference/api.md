@@ -14,6 +14,7 @@ TypeContracts.@delegate
 
 ```@docs
 TypeContracts.check_contract
+TypeContracts.check_trim_compat
 TypeContracts.satisfies
 TypeContracts.list_contract(::Type)
 TypeContracts.list_contract(::Type, ::Val{:all})
