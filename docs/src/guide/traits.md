@@ -43,7 +43,7 @@ render(42)            # "not a shape: Int64"
 render("hello")       # "not a shape: String"
 ```
 
-This pattern is zero-overhead at runtime: Julia specialises `_render` on the singleton type, and the dispatch is resolved statically when the type of `x` is known at compile time.
+This pattern is zero-overhead at runtime: Julia specializes `_render` on the singleton type, and the dispatch is resolved statically when the type of `x` is known at compile time.
 
 ## `Implemented{I}` and `NotImplemented{I}`
 
@@ -78,7 +78,7 @@ table?" (`hasmethod(f, Tuple{T, arg_types...})`). `hasmethod` is a simple lookup
 no inference, no JIT. It is available in trimmed binaries.
 
 **Reason 2 — it is a `@generated` function that bakes in concrete types.**
-`@generated` functions run their *body* at *specialisation time* — once per unique
+`@generated` functions run their *body* at *specialization time* — once per unique
 `(I, T)` type pair, during normal Julia compilation, not at the runtime you ship.
 The generated code is a fixed expression:
 
@@ -100,7 +100,7 @@ a mutable dict `_registry` for `interface_trait`, and dispatch-based `_contract_
 methods for everything else.
 
 `@generated` bodies run in a **fixed world age** — the world age at the time the
-`@generated` function was first specialised for a given type pair. They cannot see
+`@generated` function was first specialized for a given type pair. They cannot see
 methods added to `_contract_specs` *after* that world age, because those methods
 did not exist when the body was generated. A plain method dispatch inside a
 `@generated` body would silently return the wrong answer for contracts registered
@@ -109,7 +109,7 @@ later.
 A mutable dict has no world-age constraint — dict reads are always current. So
 `_registry` is the correct data structure for `interface_trait` to read during code
 generation: when `@contract` fires it writes to `_registry` unconditionally, and the
-`@generated` body reads `_registry` at specialisation time and emits concrete
+`@generated` body reads `_registry` at specialization time and emits concrete
 `hasmethod` expressions for whatever it finds there.
 
 Every other TypeContracts function — `check_contract`, `satisfies`, `describe`,
@@ -225,8 +225,8 @@ end # module
 ```
 
 `@contract` writes to `_registry` at module load time (before any `@generated`
-specialisation). By the time `draw(x)` is first called with a concrete type,
-`interface_trait` specialises, reads `_registry`, bakes in the concrete `hasmethod`
+specialization). By the time `draw(x)` is first called with a concrete type,
+`interface_trait` specializes, reads `_registry`, bakes in the concrete `hasmethod`
 checks, and the result is a static dispatch — exactly what the trimmer needs.
 
 ## Checking multiple interfaces

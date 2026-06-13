@@ -20,7 +20,7 @@ inherit the default silently.
 ```julia
 abstract type Animal end
 
-# Fallback / "default" behaviour for all Animals
+# Fallback / "default" behavior for all Animals
 speak(::Animal) = "..."
 
 struct Dog <: Animal end
@@ -45,8 +45,8 @@ abstract type Animal end
 function speak end
 function display_name end
 
-@contract Animal "An entity that can vocalise." begin
-    speak(::Self) :: String        => "primary vocalisation"
+@contract Animal "An entity that can vocalize." begin
+    speak(::Self) :: String        => "primary vocalization"
     :optional
     display_name(::Self) :: String => "human-readable name (defaults to type name)"
 end
@@ -144,7 +144,7 @@ TypeContracts turns that informal extension into a verifiable contract.
 ### Plain Julia
 
 ```julia
-# Add behaviour to Base's Int — no wrapper needed
+# Add behavior to Base's Int — no wrapper needed
 is_odd(x::Int)  = x & 1 != 0
 is_even(x::Int) = !is_odd(x)
 
@@ -190,7 +190,7 @@ any abstract type — including types from `Base` — can be the target.
 
 The **Holy Trait pattern** is the canonical Julia idiom for type-level dispatch: a
 function maps types to singleton marker values, which then drive dispatch without
-runtime cost. TypeContracts formalises this with `interface_trait`.
+runtime cost. TypeContracts formalizes this with `interface_trait`.
 
 ### Plain Julia (classic Holy Trait)
 
@@ -246,7 +246,7 @@ resolved at code-generation time — no runtime dispatch, and the result passes
 
 A common pattern is wrapping an existing type and exposing its interface by forwarding
 each required method to the inner value. The wrapper extends or instruments the
-wrapped type's behaviour without modifying it.
+wrapped type's behavior without modifying it.
 
 ### Plain Julia
 
@@ -341,7 +341,7 @@ list needed.
 
 ---
 
-## 6. Blanket Behaviour on Abstract Types
+## 6. Blanket Behavior on Abstract Types
 
 A method with an abstract type bound applies to all current and future subtypes
 without repetition — define it once on the abstract type and every concrete subtype
@@ -351,17 +351,17 @@ gets it for free.
 
 ```julia
 # One method covers all AbstractArray subtypes — present and future
-function summarise(a::AbstractArray{T}) where T
+function summarize(a::AbstractArray{T}) where T
     "$(ndims(a))D $(eltype(a)) array, size $(size(a))"
 end
 
-summarise(rand(3))     # "1D Float64 array, size (3,)"
-summarise(rand(2, 3))  # "2D Float64 array, size (2, 3)"
+summarize(rand(3))     # "1D Float64 array, size (3,)"
+summarize(rand(2, 3))  # "2D Float64 array, size (2, 3)"
 ```
 
 This is idiomatic Julia. The gap is that there is no contract asserting
 `AbstractArray` must provide `size` and `eltype`, so a type that only partially
-implements the interface slips through until `summarise` is called.
+implements the interface slips through until `summarize` is called.
 
 ### With TypeContracts
 
@@ -393,7 +393,7 @@ but violate the semantic contract (e.g., a `size` that returns wrong dimensions)
 
 ## 7. `@generated` Functions
 
-`@generated` functions generate their method body at specialisation time, with full
+`@generated` functions generate their method body at specialization time, with full
 access to the concrete type parameters. The body runs once per unique `(T1, T2, …)`
 combination and the result is compiled into static IR — no list of known types
 required, no runtime overhead.
@@ -412,7 +412,7 @@ tuple_sum((1, 2, 3))   # compiled to: t[1] + t[2] + t[3]
 ```
 
 The body runs at compile time when `N` and `T` are known, emitting concrete IR
-tailored to that specialisation.
+tailored to that specialization.
 
 ### With TypeContracts
 
@@ -444,9 +444,9 @@ eliminate dead branches. `TrimCheck.@validate` passes without error.
 
 ## 8. Parametric Type Constraints
 
-A method for `Buffer{8}` is a distinct specialisation from `Buffer{16}` — you can
+A method for `Buffer{8}` is a distinct specialization from `Buffer{16}` — you can
 define methods that exist only for specific values of a type parameter, gating
-behaviour behind compile-time constraints.
+behavior behind compile-time constraints.
 
 ### Plain Julia
 
@@ -564,12 +564,12 @@ compile time (via `@generated`), and the paths are trim-safe.
 
 | # | Pattern | Plain Julia | With TypeContracts |
 |---|---|---|---|
-| 1 | Default method behaviour | method on abstract type | `@contract` with `:optional` section; `@verify` at load time |
+| 1 | Default method behavior | method on abstract type | `@contract` with `:optional` section; `@verify` at load time |
 | 2 | Type hierarchies | `abstract type B <: A` | `@contract` per level; `@verify` checks all levels at once |
 | 3 | Extending foreign types | define methods freely | `@contract` on any type; BaseTypeContracts.jl for Base |
 | 4 | Holy Trait / type tagging | manual singleton dispatch | `interface_trait` → `Implemented`/`NotImplemented`; `@generated`, trim-safe |
 | 5 | Delegation via composition | manual forwarding, `<: AbstractX` | `@delegate :field Interface` generates forwarders from contract; `@verify` checks completeness |
-| 6 | Blanket abstract behaviour | method on abstract type | `@invariants` + `test_behavior` for semantic laws |
+| 6 | Blanket abstract behavior | method on abstract type | `@invariants` + `test_behavior` for semantic laws |
 | 7 | `@generated` metaprogramming | ad-hoc `@generated` | `interface_trait` is `@generated` → statically compilable |
 | 8 | Parametric constraints | method on `Concrete{N}` | `@contract AbstractType{N}` + `@verify`; `Self` resolves per instantiation, explicit and discoverable |
 | 9 | `where`-bounded methods | `where T <: Abstract` | `interface_trait` dispatch — named contract, trim-safe |
