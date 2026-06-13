@@ -14,15 +14,29 @@ end
 [`Self`](@ref) is a sentinel type that is substituted with the concrete type being checked at verification time. Every argument in a method signature must be typed.
 
 ```julia
-abstract type AbstractSerializer end
-function encode end
-function decode end
-
 @contract AbstractSerializer begin
     encode(::Self, ::Any) :: String
     decode(::Self, ::String)          # :: Any when unspecified
 end
 ```
+
+`@contract` automatically defines `abstract type AbstractSerializer end` and stub functions (`function encode end`, `function decode end`) if they are not already defined in the calling module.
+
+::: tip When to declare the abstract type manually
+
+If your type needs a supertype, declare it explicitly before `@contract`:
+
+```julia
+abstract type AbstractSerializer <: AbstractIO end   # supertype required
+@contract AbstractSerializer begin
+    encode(::Self, ::Any) :: String
+    decode(::Self, ::String)
+end
+```
+
+`@contract` sees the pre-existing definition and does not overwrite it.
+
+:::
 
 ## Return types
 
@@ -51,12 +65,6 @@ If no return type is declared, the inferred type is not checked (it is treated a
 The `:optional` separator splits the block into mandatory (above) and optional (below) methods. [`@verify`](@ref) and [`check_contract`](@ref) enforce only mandatory methods. [`satisfies`](@ref) reports missing optional methods separately in its `missing_optional` field.
 
 ```julia
-abstract type AbstractShape end
-function area end
-function perimeter end
-function name end
-function color end
-
 @contract AbstractShape begin
     area(::Self)      :: Float64    # mandatory
     perimeter(::Self) :: Float64    # mandatory
@@ -86,11 +94,6 @@ satisfies(Circle, AbstractShape)
 When the abstract type has type parameters, they can be referenced directly in method signatures using the `@contract AbstractType{T,N}` header form:
 
 ```julia
-abstract type AbstractContainer{T} end
-function cget end
-function cset! end
-function clen end
-
 @contract AbstractContainer{T} begin
     cget(::Self, ::Int) :: T     # return type = element type
     cset!(::Self, ::T, ::Int)    # second argument must accept T
@@ -142,7 +145,7 @@ Both the description and per-method prose are:
 
 ## Retroactive contracts for foreign types
 
-`@contract` works on any abstract type, including types you do not own. The functions listed in the block must be in scope when the macro is evaluated, but they can be foreign too:
+`@contract` works on any abstract type, including types you do not own. For foreign types and qualified functions (`Base.getindex`, etc.) the type and functions already exist, so no stubs are generated:
 
 ```julia
 using TypeContracts
@@ -163,11 +166,9 @@ end
 Contracts are **inherited automatically** through the abstract type hierarchy. A type is checked against contracts for every ancestor that has a registered contract — no explicit composition declaration is needed:
 
 ```julia
-abstract type AbstractAnimal end
+# AbstractAnimal has no supertype constraint, so @contract creates it automatically.
+# AbstractDog needs <: AbstractAnimal, so it must be declared explicitly.
 abstract type AbstractDog <: AbstractAnimal end
-
-function speak end
-function fetch end
 
 @contract AbstractAnimal begin
     speak(::Self) :: String

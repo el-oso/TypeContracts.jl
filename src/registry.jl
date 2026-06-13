@@ -57,7 +57,7 @@ const _DOC_SYNC_HOOK = _DocSyncHook()
 # The REPL extension adds a method specialised on `_DocSyncHook`.
 _attach_contract_doc(::Any, @nospecialize(::Type)) = nothing
 
-# One-argument entry emitted by the macros. `::Type{T}` forces specialisation so
+# One-argument entry emitted by the macros. `::Type{T}` forces specialization so
 # the dispatch stays statically resolvable under `juliac --trim`.
 function _attach_contract_doc(::Type{T}) where {T}
     _attach_contract_doc(_DOC_SYNC_HOOK, T)

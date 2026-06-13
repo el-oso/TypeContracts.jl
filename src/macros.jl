@@ -18,7 +18,11 @@ at check time from the concrete type's supertype chain.
 Methods before `:optional` are mandatory (enforced by `@verify`).
 Methods after `:optional` are recorded but not enforced at compile time.
 
-Functions must be in scope when `@contract` is evaluated.
+**Auto-generation:** if the abstract type or any unqualified function name is not
+yet defined in the calling module, `@contract` defines it automatically. This means
+the common boilerplate (`abstract type T end`, `function f end`) is no longer
+required. Define the abstract type explicitly beforehand only when you need a
+supertype constraint (e.g. `abstract type Animal <: LivingThing end`).
 
 # Documentation
 
@@ -38,22 +42,35 @@ end
 `?AbstractShape` then shows the contract section alongside any existing docstring.
 """
 macro contract(T_expr, block)
-    return _build_contract_expr(T_expr, "", block)
+    return _build_contract_expr(__module__, T_expr, "", block)
 end
 
 macro contract(T_expr, desc, block)
     desc isa String ||
         error("@contract: interface description must be a string literal, got: $desc")
-    return _build_contract_expr(T_expr, desc, block)
+    return _build_contract_expr(__module__, T_expr, desc, block)
 end
 
-function _build_contract_expr(T_expr, desc::String, block)
+function _build_contract_expr(mod::Module, T_expr, desc::String, block)
     block isa Expr && block.head == :block ||
         error("@contract requires a begin...end block")
 
     abstract_sym, type_vars = _parse_contract_header(T_expr)
 
     parsed = _parse_block(block)
+
+    # Auto-generate abstract type stub if not already defined in the calling module.
+    type_stub = isdefined(mod, abstract_sym) ? nothing :
+        :(abstract type $(esc(T_expr)) end)
+
+    # Auto-generate function stubs for unqualified names not yet defined.
+    # Qualified names (Base.length, etc.) are skipped — they already exist.
+    func_stubs = Expr[
+        :(function $(esc(fname)) end)
+            for (fname, _, _, _, _) in parsed
+            if fname isa Symbol && !isdefined(mod, fname)
+    ]
+
     spec_exprs = Expr[]
 
     for (fname, atypes, rtype, opt, mdoc) in parsed
@@ -79,6 +96,8 @@ function _build_contract_expr(T_expr, desc::String, block)
     end
 
     return quote
+        $(isnothing(type_stub) ? :() : type_stub)
+        $(func_stubs...)
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
         # Dict write for interface_trait (@generated bodies need world-age-safe dict access)
