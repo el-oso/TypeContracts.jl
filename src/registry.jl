@@ -9,7 +9,7 @@
 # which are code rather than mutable state, making multi-package coexistence
 # safe under Julia's precompilation model.
 
-const _registry = Dict{Type, Vector{MethodSpec}}()
+const _registry = Dict{Type, Vector{MethodSpecMin}}()
 
 # Types and modules registered for live re-checking by the Revise extension.
 const _revise_tracked_types = Set{Type}()
@@ -162,4 +162,12 @@ function _build_sig(arg_types::Vector{Any}, T::Type)
             at
     end
     return Tuple{resolved...}
+end
+
+function _build_sig(arg_types::Tuple, T::Type)
+    types = ntuple(length(arg_types)) do i
+        at = arg_types[i]
+        at === Self ? T : at isa TypeParamRef ? _extract_param(T, at) : at::Type
+    end
+    return Tuple{types...}
 end

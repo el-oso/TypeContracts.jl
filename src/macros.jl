@@ -72,9 +72,11 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
     ]
 
     spec_exprs = Expr[]
+    min_spec_exprs = Expr[]
 
     for (fname, atypes, rtype, opt, mdoc) in parsed
         aexprs = Any[_resolve_arg_expr(t, type_vars, abstract_sym) for t in atypes]
+        min_arg_expr = Expr(:tuple, aexprs...)
 
         rtype_display_expr, rtype_spec_expr = _resolve_rtype_exprs(rtype, type_vars, abstract_sym)
 
@@ -93,6 +95,11 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
                 )
             )
         )
+        push!(
+            min_spec_exprs, :(
+                TypeContracts.MethodSpecMin($(esc(fname)), $min_arg_expr, $opt)
+            )
+        )
     end
 
     return quote
@@ -100,8 +107,9 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
         $(func_stubs...)
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
-        # Dict write for interface_trait (@generated bodies need world-age-safe dict access)
-        TypeContracts._registry[$(esc(abstract_sym))] = TypeContracts.MethodSpec[$(spec_exprs...)]
+        # Dict write for interface_trait (@generated bodies need world-age-safe dict access).
+        # Uses MethodSpecMin (no strings) so juliac --trim retains no metadata here.
+        TypeContracts._registry[$(esc(abstract_sym))] = TypeContracts.MethodSpecMin[$(min_spec_exprs...)]
         # Method definitions for everything else (precompilation-safe across packages)
         function TypeContracts._contract_specs(::Type{$(esc(abstract_sym))})
             return TypeContracts.MethodSpec[$(spec_exprs...)]
