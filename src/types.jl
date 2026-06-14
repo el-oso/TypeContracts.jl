@@ -94,6 +94,21 @@ function _print_sig_highlighted(io::IO, desc::String)
 end
 
 """
+    MethodSpecMin
+
+Minimal method requirement stored in `_registry` for `interface_trait`'s `@generated`
+body. Holds only `f`, `arg_types`, and `optional` — no description or doc strings —
+so a juliac `--trim` binary retains no metadata even when `_registry` is reachable
+from the generator. Full metadata lives in `MethodSpec` inside `_contract_specs` methods,
+which the trimmer eliminates as unreachable from runtime entry points.
+"""
+struct MethodSpecMin
+    f::Function
+    arg_types::Tuple
+    optional::Bool
+end
+
+"""
     MethodSpec
 
 A single method requirement within an interface contract.
