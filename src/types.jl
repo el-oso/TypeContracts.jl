@@ -7,7 +7,14 @@ with the actual type being checked.
 """
 struct Self end
 
-Base.show(io::IO, ::Type{Self}) = print(io, "Self")
+# NOTE: deliberately no `Base.show(io, ::Type{Self})`.
+# Overloading `show` on a `Type{…}` adds a method more specific than Base's
+# `show(::IO, ::Type)`, which invalidates the huge backedge graph of the type/print
+# pipeline — every downstream package that displays a type (Makie, etc.) then pays
+# seconds of recompilation on first use. `Self` only ever appears inside contract
+# signatures as the literal source symbol `:Self`, and `_fmt` (macros.jl) builds those
+# description strings from the AST at macro-expansion time, so "Self" still renders
+# correctly without a custom `show`.
 
 """
     TypeParamRef
