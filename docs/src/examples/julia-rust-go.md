@@ -495,24 +495,27 @@ Generate method bodies from type information for zero-overhead static dispatch.
 #### Julia + TypeContracts
 
 ```julia
-# interface_trait is @generated — the registry is read at
-# specialization time and the body emitted as a static chain
-# of hasmethod() calls. juliac --trim safe.
-@generated function interface_trait(::Type{I}, ::Type{T}) where {I,T}
-    specs = get(_registry, I, nothing)
-    isnothing(specs) && return :(NotImplemented{I}())
+# @contract emits a per-interface @generated method for
+# interface_trait. The generator runs at specialization time
+# and emits a static chain of hasmethod() calls. juliac --trim safe.
+@generated function interface_trait(::Type{AbstractShape}, ::Type{T}) where {T}
+    # contract methods baked in at macro-expansion; no registry lookup
+    return _build_trait_expr(AbstractShape, T, arg_lists, fns)
+end
+
+# _build_trait_expr (runs at specialization time, T concrete):
+function _build_trait_expr(I, T, arg_lists, fns)
     checks = Expr[]
-    for spec in specs
-        spec.optional && continue
-        sig = _build_sig(spec.arg_types, T)
-        push!(checks, :(hasmethod($(spec.f), $sig)))
+    for i in eachindex(fns)
+        sig = _build_sig(arg_lists[i], T)
+        push!(checks, :(hasmethod($(fns[i]), $sig)))
     end
-    isempty(checks) && return :(Implemented{I}())
+    isempty(checks) && return :($(Implemented{I}()))
     cond = foldl((a,b) -> :($a && $b), checks)
-    :($cond ? Implemented{I}() : NotImplemented{I}())
+    :($cond ? $(Implemented{I}()) : $(NotImplemented{I}()))
 end
 # @generated bodies have full access to the Julia type system:
-# read registries, inspect types, emit arbitrary IR.
+# inspect types, emit arbitrary IR.
 ```
 
 #### Rust

@@ -1,6 +1,6 @@
 module TypeContracts
 
-using InteractiveUtils: supertypes
+using InteractiveUtils: supertypes, subtypes
 
 include("types.jl")
 export Self, TypeParamRef, InterfaceError, MethodSpec, BehaviorSpec,

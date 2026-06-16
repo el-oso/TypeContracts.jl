@@ -28,16 +28,14 @@ function _scan_trim_stmt!(issues::Vector{String}, stmt)
     if stmt.head === :call
         callee = stmt.args[1]
         if _is_trim_unsafe_callee(callee)
-            push!(issues, _callee_str(callee))
+            push!(issues, "dynamic dispatch to $(_callee_str(callee))")
         end
     elseif stmt.head === :invoke
         # In optimized IR, :invoke args are: (MethodInstance, callee, arg...)
         # Keyword functions pass the wrapped fn as a plain argument; scan all args.
         for arg in stmt.args
-            if arg in _TRIM_UNSAFE_CALLEES
-                push!(issues, string(arg))
-            elseif _is_trim_unsafe_callee(arg)
-                push!(issues, _callee_str(arg))
+            if arg in _TRIM_UNSAFE_CALLEES || _is_trim_unsafe_callee(arg)
+                push!(issues, "static call to $(_callee_str(arg))")
             end
         end
     end
@@ -91,7 +89,7 @@ function check_trim_compat(T::Type)
             hasmethod(spec.f, sig) || continue
             found = _trim_issues(spec.f, sig)
             for issue in found
-                push!(contract_issues, "  $(spec.description): calls $issue (trim-unsafe)")
+                push!(contract_issues, "  $(spec.description): $issue (trim-unsafe)")
                 all_clean = false
             end
         end

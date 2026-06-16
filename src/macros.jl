@@ -72,11 +72,14 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
     ]
 
     spec_exprs = Expr[]
-    min_spec_exprs = Expr[]
+    # For the generated `interface_trait` method: argument-type markers and the function
+    # object for each *mandatory* method. `_build_trait_expr` consumes these at
+    # specialization time, resolving `Self`/`TypeParamRef` against the concrete type.
+    trait_arg_lists = Expr[]
+    trait_fns = Any[]
 
     for (fname, atypes, rtype, opt, mdoc) in parsed
         aexprs = Any[_resolve_arg_expr(t, type_vars, abstract_sym) for t in atypes]
-        min_arg_expr = Expr(:tuple, aexprs...)
 
         rtype_display_expr, rtype_spec_expr = _resolve_rtype_exprs(rtype, type_vars, abstract_sym)
 
@@ -95,25 +98,36 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
                 )
             )
         )
-        push!(
-            min_spec_exprs, :(
-                TypeContracts.MethodSpecMin($(esc(fname)), $min_arg_expr, $opt)
-            )
-        )
+
+        if !opt
+            push!(trait_arg_lists, :(Any[$(aexprs...)]))
+            push!(trait_fns, esc(fname))
+        end
     end
+
+    # `interface_trait` for this interface is a `@generated` method emitted by `@contract`
+    # (not a Dict mutation): being a method definition, it is serialized into the
+    # registering package's precompile cache and survives reloads, and it dispatches under
+    # the caller's world age. The generator runs at specialization time with the concrete
+    # type `T` bound, so `_build_trait_expr` bakes in concrete `hasmethod(f, Tuple{…})`
+    # calls — no runtime registry lookup, trim-safe for both plain and parametric contracts.
+    trait_method = :(
+        @generated function TypeContracts.interface_trait(::Type{$(esc(abstract_sym))}, ::Type{T}) where {T}
+            return TypeContracts._build_trait_expr(
+                $(esc(abstract_sym)), T, Any[$(trait_arg_lists...)], Any[$(trait_fns...)]
+            )
+        end
+    )
 
     return quote
         $(isnothing(type_stub) ? :() : type_stub)
         $(func_stubs...)
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
-        # Dict write for interface_trait (@generated bodies need world-age-safe dict access).
-        # Uses MethodSpecMin (no strings) so juliac --trim retains no metadata here.
-        TypeContracts._registry[$(esc(abstract_sym))] = TypeContracts.MethodSpecMin[$(min_spec_exprs...)]
-        # Method definitions for everything else (precompilation-safe across packages)
         function TypeContracts._contract_specs(::Type{$(esc(abstract_sym))})
             return TypeContracts.MethodSpec[$(spec_exprs...)]
         end
+        $trait_method
         function TypeContracts._contract_desc(::Type{$(esc(abstract_sym))})
             $desc
         end
@@ -125,10 +139,12 @@ end
 """
     @verify ConcreteType
     @verify ConcreteType trim_compat=true
+    @verify AbstractType subtypes=true
+    @verify AbstractType subtypes=true trim_compat=true
 
-Assert at module-load / precompile time that `ConcreteType` satisfies all
-mandatory contracts for its supertype chain. Checks both method existence
-and declared return types (via `Base.return_types`).
+Assert at module-load / precompile time that a type satisfies all mandatory
+contracts for its supertype chain. Checks both method existence and declared
+return types (via `Base.return_types`).
 
 **juliac / trim binaries:** `@verify` at module top level is safe. It runs
 during Julia's precompilation step (before the native binary is produced) and
@@ -137,20 +153,31 @@ because it is unreachable from any entry point. Do not call `@verify` (or
 `check_contract`) inside a function that runs at binary runtime — that would
 embed a `Base.return_types` call in the runtime call graph.
 
-With `trim_compat=true`, also runs `check_trim_compat(ConcreteType)` to scan
-the typed IR of each mandatory method for known trim-unsafe calls
-(`Base.return_types`, `invokelatest`, etc.) and emits `@warn` for any found.
-This is a shallow, heuristic check — use `TrimCheck.@validate` for exhaustive
-verification.
+With `trim_compat=true`, also runs `check_trim_compat` to scan the typed IR
+of each mandatory method for known trim-unsafe calls (`Base.return_types`,
+`invokelatest`, etc.) and emits `@warn` for any found. This is a shallow,
+heuristic check — use `TrimCheck.@validate` for exhaustive verification.
 
-Must be placed after all method definitions for the type.
+With `subtypes=true`, verifies every concrete subtype of the given abstract
+type rather than the type itself. Equivalent to calling `@verify` on each
+concrete subtype individually, and self-maintaining as new subtypes are added.
+
+Must be placed after all type and method definitions.
 """
 macro verify(T, kwargs...)
     trim_compat = false
+    check_subtypes = false
     for kw in kwargs
-        if kw isa Expr && kw.head === :(=) && kw.args[1] === :trim_compat
-            trim_compat = kw.args[2]
+        if kw isa Expr && kw.head === :(=)
+            if kw.args[1] === :trim_compat
+                trim_compat = kw.args[2]
+            elseif kw.args[1] === :subtypes
+                check_subtypes = kw.args[2]
+            end
         end
+    end
+    if check_subtypes
+        return :(TypeContracts._verify_subtypes($(esc(T)); trim_compat = $(trim_compat)))
     end
     return quote
         let _verify_result = TypeContracts.check_contract($(esc(T)))

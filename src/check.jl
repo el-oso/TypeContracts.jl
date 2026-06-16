@@ -21,6 +21,12 @@ function check_contract(T::Type)
             spec.optional && continue
             sig = _build_sig(spec.arg_types, T)
             if !hasmethod(spec.f, sig)
+                if !isempty(methods(spec.f, Tuple{T, Vararg{Any}}))
+                    @warn "$(nameof(spec.f)) is defined for $T but its argument " *
+                        "types are more specific than the contract requires — " *
+                        "contract: $(spec.description). Widen the implementation's " *
+                        "argument types to match, or tighten the contract."
+                end
                 push!(errors, "  $(spec.description)  [required by $S]")
             else
                 expected_rt = _resolve_rt_spec(T, spec)
@@ -51,6 +57,28 @@ function check_contract(T::Type)
     end
 
     return (type = T, contracts = checked, passed = true)
+end
+
+function _concrete_subtypes(T::Type)
+    result = Type[]
+    for S in subtypes(T)
+        if isabstracttype(S)
+            append!(result, _concrete_subtypes(S))
+        else
+            push!(result, S)
+        end
+    end
+    return result
+end
+
+function _verify_subtypes(T::Type; trim_compat::Bool = false)
+    concrete = _concrete_subtypes(T)
+    isempty(concrete) && @warn "@verify subtypes=true: no concrete subtypes found for $T"
+    for S in concrete
+        check_contract(S)
+        trim_compat && check_trim_compat(S)
+    end
+    return (type = T, subtypes_checked = concrete, passed = true)
 end
 
 # Non-throwing variant used by the Revise extension after live edits.
@@ -94,6 +122,12 @@ function satisfies(T::Type, S::Type)
     for spec in specs
         sig = _build_sig(spec.arg_types, T)
         if !hasmethod(spec.f, sig)
+            if !spec.optional && !isempty(methods(spec.f, Tuple{T, Vararg{Any}}))
+                @warn "$(nameof(spec.f)) is defined for $T but its argument " *
+                    "types are more specific than the contract requires — " *
+                    "contract: $(spec.description). Widen the implementation's " *
+                    "argument types to match, or tighten the contract."
+            end
             push!(spec.optional ? missing_optional : missing_methods, spec.description)
         elseif !spec.optional
             expected_rt = _resolve_rt_spec(T, spec)

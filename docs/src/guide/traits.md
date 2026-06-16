@@ -77,45 +77,47 @@ The check inside `interface_trait` is purely "does this method exist in the meth
 table?" (`hasmethod(f, Tuple{T, arg_types...})`). `hasmethod` is a simple lookup —
 no inference, no JIT. It is available in trimmed binaries.
 
-**Reason 2 — it is a `@generated` function that bakes in concrete types.**
-`@generated` functions run their *body* at *specialization time* — once per unique
-`(I, T)` type pair, during normal Julia compilation, not at the runtime you ship.
-The generated code is a fixed expression:
+**Reason 2 — it is a `@generated` method that bakes in concrete types.**
+`@contract I` emits a per-interface `@generated` method
+`interface_trait(::Type{I}, ::Type{T}) where {T}`. `@generated` methods run their
+*body* at *specialization time* — once per unique `(I, T)` type pair, during normal
+Julia compilation, not at the runtime you ship. The generated code is a fixed expression:
 
 ```julia
-# What the @generated body emits for interface_trait(AbstractShape, Circle):
+# What the @generated method emits for interface_trait(AbstractShape, Circle):
 hasmethod(area, Tuple{Circle}) && hasmethod(perimeter, Tuple{Circle}) ?
     Implemented{AbstractShape}() : NotImplemented{AbstractShape}()
 ```
 
-Both `area`, `Circle`, and `perimeter` are **concrete values baked in at generation
+`area`, `Circle`, and `perimeter` are **concrete values baked in at generation
 time**. There is no stored abstract `Function` value, no runtime registry lookup, no
-dynamic signature construction. From the perspective of the trimmer, this is just a
-pair of concrete `hasmethod` calls — statically resolvable.
+dynamic signature construction. For parametric contracts, `Self` and the contract's
+type parameters are resolved against the concrete type during generation too, so the
+emitted body is equally concrete. From the perspective of the trimmer, this is just a
+conjunction of concrete `hasmethod` calls — statically resolvable.
 
-### The `_registry` dict and world age
+### Method-based registration and world age
 
-There is a subtle constraint that explains why TypeContracts uses *two* registries —
-a mutable dict `_registry` for `interface_trait`, and dispatch-based `_contract_specs`
-methods for everything else.
+All contract state lives in **method definitions**, never a mutable global. `@contract I`
+emits the `@generated` `interface_trait(::Type{I}, …)` method above, plus a
+`_contract_specs(::Type{I})` method used by the dev-time tools (`check_contract`,
+`satisfies`, `describe`, `list_contract`).
 
-`@generated` bodies run in a **fixed world age** — the world age at the time the
-`@generated` function was first specialized for a given type pair. They cannot see
-methods added to `_contract_specs` *after* that world age, because those methods
-did not exist when the body was generated. A plain method dispatch inside a
-`@generated` body would silently return the wrong answer for contracts registered
-later.
+This matters for two reasons:
 
-A mutable dict has no world-age constraint — dict reads are always current. So
-`_registry` is the correct data structure for `interface_trait` to read during code
-generation: when `@contract` fires it writes to `_registry` unconditionally, and the
-`@generated` body reads `_registry` at specialization time and emits concrete
-`hasmethod` expressions for whatever it finds there.
+1. **Precompilation survival.** Method definitions are serialized into the registering
+   package's precompile cache. A package that declares contracts works from a cold,
+   precompiled load with **no `__init__` or re-registration step**. (A mutable dict
+   would be reset if TypeContracts were invalidated and reloaded, silently breaking
+   dependent packages — which is exactly the failure mode this design avoids.)
 
-Every other TypeContracts function — `check_contract`, `satisfies`, `describe`,
-`list_contract` — uses `_contract_specs` (the dispatch-based registry) because they
-run at normal world ages where method dispatch works correctly. They never touch
-`_registry` directly.
+2. **World age.** `@generated` bodies run in a **fixed world age**. A *single global*
+   `interface_trait` could not dispatch to `_contract_specs` methods registered later by
+   other packages — they would be invisible to its generator. TypeContracts sidesteps
+   this entirely by emitting *one `@generated` method per interface*, in the same package
+   that declares the contract, immediately after that interface's `_contract_specs`. Each
+   generator only ever needs its own baked-in method data (plus `_build_sig` from
+   TypeContracts), so there is no cross-package lookup and no world-age hazard.
 
 ### `@verify` and juliac binaries
 
@@ -224,10 +226,10 @@ draw(x) = _draw(interface_trait(AbstractShape, typeof(x)), x)
 end # module
 ```
 
-`@contract` writes to `_registry` at module load time (before any `@generated`
-specialization). By the time `draw(x)` is first called with a concrete type,
-`interface_trait` specializes, reads `_registry`, bakes in the concrete `hasmethod`
-checks, and the result is a static dispatch — exactly what the trimmer needs.
+`@contract` emits the per-interface `interface_trait` method at module load time. By
+the time `draw(x)` is first called with a concrete type, that method specializes, its
+generator bakes in the concrete `hasmethod` checks, and the result is a static dispatch
+— exactly what the trimmer needs. No registry dict, no `__init__` step.
 
 ## Checking multiple interfaces
 

@@ -416,23 +416,28 @@ tailored to that specialization.
 
 ### With TypeContracts
 
-`interface_trait` itself is implemented as a `@generated` function. The registry is
-consulted at code-generation time and the body is emitted as a static chain of
-`hasmethod` calls with fully concrete signatures:
+`@contract I` emits a per-interface `@generated` method for `interface_trait`. Its
+generator runs at code-generation time and emits the body as a static chain of
+`hasmethod` calls with fully concrete signatures. The contract's methods are baked into
+the generated method at macro-expansion time, so the generator needs no registry lookup:
 
 ```julia
-@generated function interface_trait(::Type{I}, ::Type{T}) where {I, T}
-    specs = get(_registry, _registry_key(I), nothing)
-    isnothing(specs) && return :(NotImplemented{I}())
+# Emitted by `@contract AbstractShape begin … end`:
+@generated function interface_trait(::Type{AbstractShape}, ::Type{T}) where {T}
+    # arg-type markers + function objects baked in for each mandatory method
+    return _build_trait_expr(AbstractShape, T, arg_lists, fns)
+end
+
+# _build_trait_expr (in TypeContracts) — runs at specialization time, T concrete:
+function _build_trait_expr(I, T, arg_lists, fns)
     checks = Expr[]
-    for spec in specs
-        spec.optional && continue
-        sig = _build_sig(spec.arg_types, T)   # concrete Tuple type, resolved now
-        push!(checks, :(hasmethod($(spec.f), $sig)))
+    for i in eachindex(fns)
+        sig = _build_sig(arg_lists[i], T)   # concrete Tuple type, resolved now
+        push!(checks, :(hasmethod($(fns[i]), $sig)))
     end
-    isempty(checks) && return :(Implemented{I}())
+    isempty(checks) && return :($(Implemented{I}()))
     cond = foldl((a, b) -> :($a && $b), checks)
-    :($cond ? Implemented{I}() : NotImplemented{I}())
+    :($cond ? $(Implemented{I}()) : $(NotImplemented{I}()))
 end
 ```
 

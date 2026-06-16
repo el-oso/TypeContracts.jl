@@ -1,15 +1,14 @@
-# `_registry` is kept as a mutable dict solely for the `interface_trait`
-# @generated function. @generated bodies run in a fixed world age and cannot
-# dispatch to methods added after the @generated function was defined, so
-# dict access (world-age-insensitive) is the only safe option there.
+# All contract state is stored as *method definitions*, never mutable globals.
+# `@contract` emits:
+#   - a concrete `interface_trait(::Type{I}, ::Type{T})` method (runtime dispatch key)
+#   - `_contract_specs` / `_contract_desc` methods (used by check_contract, satisfies,
+#     describe, list_contract, check_trim_compat)
+# `@invariants` emits `_behavior_specs` methods.
 #
-# Everything else — check_contract, satisfies, describe, list_contract,
-# list_behaviors, test_behavior — uses dispatch-based functions below.
-# Those are extended by `@contract` / `@invariants` via method definitions,
-# which are code rather than mutable state, making multi-package coexistence
-# safe under Julia's precompilation model.
-
-const _registry = Dict{Type, Vector{MethodSpecMin}}()
+# Method definitions are code, not mutable state: they are serialized into the
+# registering package's precompile cache and survive precompilation and reloads.
+# This is what makes multi-package coexistence safe under Julia's precompilation
+# model — there is no shared dict to be reset out from under a dependent package.
 
 # Types and modules registered for live re-checking by the Revise extension.
 const _revise_tracked_types = Set{Type}()
@@ -162,12 +161,4 @@ function _build_sig(arg_types::Vector{Any}, T::Type)
             at
     end
     return Tuple{resolved...}
-end
-
-function _build_sig(arg_types::Tuple, T::Type)
-    types = ntuple(length(arg_types)) do i
-        at = arg_types[i]
-        at === Self ? T : at isa TypeParamRef ? _extract_param(T, at) : at::Type
-    end
-    return Tuple{types...}
 end
