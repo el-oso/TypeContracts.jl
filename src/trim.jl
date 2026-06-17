@@ -107,3 +107,100 @@ function check_trim_compat(T::Type)
         passed = all_clean,
     )
 end
+
+# ── Proactive entry-point scan (trim_report) ──────────────────────────────────
+#
+# A fast, *advisory* pre-build check: scan the optimized+typed IR of an entry function
+# for the patterns juliac --trim=safe rejects, so the developer gets a readable warning
+# before the slow juliac run. juliac remains authoritative; this is a heuristic and may
+# miss issues (it doesn't replicate juliac's whole-program verifier) — so consumers
+# should warn, not hard-fail, on its findings.
+
+"""
+    TrimReport(entry, findings, passed)
+
+Result of [`trim_report`](@ref): `entry` describes the scanned function, `findings` are
+human-readable likely-trim-unsafe sites (empty when clean), and `passed` is their absence.
+`TrimReport <: Exception` so it can be thrown with a styled `showerror` when desired.
+"""
+struct TrimReport <: Exception
+    entry::String
+    findings::Vector{String}
+    passed::Bool
+end
+
+_trim_truncate(s::AbstractString, n::Int = 140) =
+    length(s) > n ? string(first(s, n), " …") : String(s)
+
+# High-confidence dynamic-dispatch detection from optimized typed IR: a `:call` whose
+# inferred result type is `Any` is exactly what juliac reports as "unresolved call …::Any".
+# Resolved calls are lowered to `:invoke`; builtins/intrinsics with concrete results are
+# not flagged. Also catches the reflection callees in `_TRIM_UNSAFE_CALLEES`.
+function _dynamic_call_issues(f, @nospecialize(sig::Type{<:Tuple}))::Vector{String}
+    # Reflection callees (return_types/invokelatest/which/methods) — handles both
+    # :call and :invoke forms via the shared scanner.
+    issues = copy(_trim_issues(f, sig))
+    local results
+    try
+        results = Base.code_typed(f, sig; optimize = true)
+    catch
+        return unique!(issues)
+    end
+    isempty(results) && return unique!(issues)
+    (ci, _rt) = first(results)
+    types = ci.ssavaluetypes
+    has_types = types isa AbstractVector
+    # Dynamic dispatch: a :call whose result inferred to `Any` — exactly juliac's
+    # "unresolved call …::Any". Resolved calls are :invoke; concrete builtins aren't Any.
+    for (i, stmt) in enumerate(ci.code)
+        isa(stmt, Expr) || continue
+        stmt.head === :call || continue
+        _is_trim_unsafe_callee(stmt.args[1]) && continue   # already covered above
+        t = (has_types && i <= length(types)) ? types[i] : nothing
+        t === Any && push!(issues, "dynamic dispatch (result inferred as `Any`): " *
+                                    _trim_truncate(string(stmt)))
+    end
+    return unique!(issues)
+end
+
+"""
+    trim_report(f, sig::Type{<:Tuple}) -> TrimReport
+
+Statically scan the optimized, type-inferred IR of `f` called with argument tuple-type
+`sig` for patterns `juliac --trim=safe` rejects — dynamic dispatch (a call whose result
+infers to `Any`) and reflection (`return_types`, `invokelatest`, `which`, `methods`).
+
+This is a fast, **advisory** pre-build check, not a substitute for juliac's verifier:
+it inspects one function's IR (after inlining, so many transitive issues surface) but
+does not run the whole-program trim analysis. Treat findings as warnings.
+
+```julia
+trim_report(myfunc, Tuple{Int64})          # → TrimReport(...; passed=true/false)
+```
+"""
+function trim_report(f, @nospecialize(sig::Type{<:Tuple}))
+    entry = string(nameof(f), "(", join(sig.parameters, ", "), ")")
+    findings = _dynamic_call_issues(f, sig)
+    return TrimReport(entry, findings, isempty(findings))
+end
+
+function Base.showerror(io::IO, r::TrimReport)
+    printstyled(io, "TrimReport"; bold = true, color = r.passed ? :green : :red)
+    if r.passed
+        print(io, ": ", r.entry, " — no obvious trim-unsafe sites found.")
+        return
+    end
+    print(io, ": ")
+    printstyled(io, r.entry; color = :cyan, bold = true)
+    println(io, " has ", length(r.findings),
+            " likely trim-unsafe site(s) (juliac --trim=safe is authoritative):")
+    for f in r.findings
+        printstyled(io, "  ✗ "; color = :red)
+        printstyled(io, f; color = :yellow)
+        println(io)
+    end
+    printstyled(io, "  → make these calls statically resolvable (concrete types; avoid " *
+                    "`Any`/abstract containers and runtime reflection).";
+                color = :green)
+    return
+end

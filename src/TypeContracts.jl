@@ -13,7 +13,13 @@ include("check.jl")
 export check_contract, satisfies, implements, list_contract, list_behaviors
 
 include("trim.jl")
-export check_trim_compat
+export check_trim_compat, trim_report, TrimReport
+
+# Reactive juliac --trim output translation. Kept in its own submodule (no other
+# module depends on it) so it can be extracted into a standalone package later.
+include("trim_diagnostics.jl")
+using .TrimDiagnostics: TrimDiagnostics, TrimFailure, explain_trim_failure
+export TrimDiagnostics, TrimFailure, explain_trim_failure
 
 include("trait.jl")
 export interface_trait
