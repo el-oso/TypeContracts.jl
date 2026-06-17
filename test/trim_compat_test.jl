@@ -35,9 +35,11 @@ end
     result = check_trim_compat(TrimBadImpl)
     @test !result.passed
     @test !isempty(result.issues)
-    # The issue should mention Base.return_types
     issue_text = join(Iterators.flatten(values(result.issues)), " ")
     @test occursin("return_types", issue_text)
+    # The improvement from user feedback: method name and IR pattern label must appear.
+    @test occursin("tbad_fn", issue_text)
+    @test occursin("dynamic dispatch", issue_text) || occursin("static call", issue_text)
 end
 
 @testitem "@verify trim_compat=true — no-op when methods are clean" setup = [TCFixtures] begin
