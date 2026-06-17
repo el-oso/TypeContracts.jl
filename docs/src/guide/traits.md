@@ -188,6 +188,78 @@ result.issues     # Dict{Type, Vector{String}} — issues grouped by contract ty
 `check_trim_compat` itself has zero runtime overhead: it runs at module load time
 (same as `@verify`) and emits no code into the precompiled image.
 
+### Proactive scan: `trim_report`
+
+`trim_report(f, sig)` scans the optimized, type-inferred IR of a single function for the
+patterns `juliac --trim=safe` rejects — dynamic dispatch (a call whose result infers to
+`Any`) and known reflection callees (`Base.return_types`, `invokelatest`, `which`,
+`methods`). It returns a `TrimReport` you can inspect or throw:
+
+```julia
+using TypeContracts: trim_report
+
+f(x::Int64) = x + 1                               # clean
+report = trim_report(f, Tuple{Int64})
+report.passed    # true
+report.findings  # String[] — empty
+
+g(n::Int64) = Base.inferencebarrier(n) + 1         # dynamic dispatch
+report = trim_report(g, Tuple{Int64})
+report.passed    # false
+report.findings  # ["dynamic dispatch (result inferred as `Any`): …"]
+showerror(stdout, report)
+# TrimReport: g(Int64) has 1 likely trim-unsafe site(s) …
+#   ✗ dynamic dispatch (result inferred as `Any`): …
+#   → make these calls statically resolvable …
+```
+
+This is a **fast, advisory** check — it inspects one function's IR (after inlining, so
+many transitive issues surface) but does not run juliac's whole-program verifier. Treat
+findings as warnings; juliac remains authoritative.
+
+### Reactive translation: `TrimDiagnostics.explain_trim_failure`
+
+When a `juliac --trim=safe` run fails, its raw output is a long dump of numbered
+"Verifier error" blocks — the same root cause repeated several times, with full stack
+traces, no source mapping to user code. `TrimDiagnostics.explain_trim_failure` turns
+that into a concise, source-mapped `TrimFailure`:
+
+```julia
+using TypeContracts: explain_trim_failure, TrimFailure
+
+# captured = the raw string output from the failed juliac invocation
+failure = explain_trim_failure(captured;
+    entry_path  = "/path/to/_generated_entry.jl",   # filter generated frames
+    source_files = ["/path/to/user_source.jl"],      # prioritize user frames
+)
+# failure isa TrimFailure
+showerror(stdout, failure)
+```
+
+**Example output** for a function with one dynamic-dispatch site:
+
+```
+TrimFailure: juliac --trim=safe rejected 1 call site (4 verifier errors) — these calls are not statically resolvable.
+
+  ✗ dyn(n::Int64)  user_source.jl:6  (4 errors)
+      unresolved: (Base.compilerbarrier(:type, n::Int64)::Any + 1)::Any
+      → a value inferred as `Any` makes this call dynamic — annotate or narrow the type
+        (e.g. `x::Concrete`, a type assertion, or avoid abstract containers) so the
+        call is statically resolvable.
+
+  (rebuild with verbose=true / keep_build=true for raw juliac output.)
+```
+
+Key properties:
+- Multiple raw verifier errors for the **same source line** are collapsed into one site.
+- Generated wrapper frames (`_pt_entry.jl`, `_mexgen.jl`, …) are filtered out; only user-source frames appear.
+- If the output format is not recognized (e.g. a future juliac version), the function degrades gracefully: `failure.recognized == false`, `showerror` prints the raw output so no information is hidden.
+
+**`TrimDiagnostics` is a self-contained submodule** — no other TypeContracts module
+depends on it — so it can be split into a standalone package later without breaking
+anything. Tools built on juliac (ParselTongue, Mexicah) call it internally; the parsed
+`TrimFailure` is what `build_extension`/`build_mex` throw on a trim failure.
+
 ### No manual opt-out needed
 
 The documentation and doc-attachment machinery lives entirely in package extensions:

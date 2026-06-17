@@ -67,6 +67,18 @@ TypeContracts.contract_md_string
 TypeContracts.contract_md
 ```
 
+## Trim diagnostics
+
+Proactive pre-build scan and reactive juliac output translation. See the
+[trim diagnostics guide](../guide/traits.md#Proactive-scan:-trim_report) for examples.
+
+```@docs
+TypeContracts.trim_report
+TypeContracts.TrimReport
+TypeContracts.TrimDiagnostics.explain_trim_failure
+TypeContracts.TrimDiagnostics.TrimFailure
+```
+
 ## Types
 
 ```@docs
