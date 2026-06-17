@@ -24,6 +24,7 @@ makedocs(;
             "Behavioral Testing" => "guide/behavioral.md",
             "Testing" => "guide/testing.md",
             "Trait Dispatch" => "guide/traits.md",
+            "Trim Compatibility" => "guide/trim.md",
             "Introspection" => "guide/introspection.md",
             "Documentation Integration" => "guide/documentation.md",
             "Revise Integration" => "guide/revise.md",
