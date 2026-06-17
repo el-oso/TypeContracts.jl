@@ -127,6 +127,33 @@ result.issues   # Dict{Type, Vector{String}} — issues grouped by contract type
 This is a **shallow scan**: it inspects only the top-level method body, not callees.
 For exhaustive verification use `TrimCheck.@validate`.
 
+## Structural protocols: `check_trim_compat(T, I)`
+
+`check_trim_compat(T)` only checks contracts reachable through `supertypes(T)`. For
+**structural (Holy Trait) protocols** — where user types satisfy a contract's method
+signatures but do not and cannot subtype the interface type — this is a no-op.
+
+Use the two-argument form to check trim compatibility against a specific contract
+regardless of subtyping:
+
+```julia
+# I is a structural protocol — user types never do `MyType <: AbstractBoundary`
+@contract AbstractBoundary begin
+    to_c(::Self)   :: Ptr{Cvoid}
+    from_c(::Type{Self}, ::Ptr{Cvoid}) :: Self
+end
+
+# Check that MyImpl satisfies the structural contract
+@verify MyImpl for_contract = AbstractBoundary
+
+# Also check trim-safety of MyImpl's implementations
+@verify MyImpl for_contract = AbstractBoundary trim_compat = true
+
+# Standalone function forms
+check_contract(MyImpl, AbstractBoundary)       # throws InterfaceError if missing methods
+check_trim_compat(MyImpl, AbstractBoundary)    # warns if implementations call return_types etc.
+```
+
 ## Proactive scan: `trim_report`
 
 `trim_report(f, sig)` scans the optimized, type-inferred IR of a single function for

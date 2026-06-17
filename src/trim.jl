@@ -108,6 +108,45 @@ function check_trim_compat(T::Type)
     )
 end
 
+"""
+    check_trim_compat(T::Type, I::Type) -> NamedTuple{(:type, :contracts, :issues, :passed)}
+
+Structural variant of [`check_trim_compat`](@ref): scan the typed IR of each mandatory
+method of contract `I` implemented by `T`, without requiring `T <: I`. Useful for
+structural (Holy Trait) protocols where user types never subtype the interface type —
+`check_trim_compat(T)` is a no-op in that case because `I` is absent from `supertypes(T)`.
+
+Emits `@warn` for each finding; does not throw. Call after `check_contract(T, I)` so
+method existence is already guaranteed.
+"""
+function check_trim_compat(T::Type, I::Type)
+    specs = _contract_specs(_registry_key(I))
+    isempty(specs) && return (
+        type = T, contracts = Type[], issues = Dict{Type, Vector{String}}(), passed = true,
+    )
+    contract_issues = String[]
+    for spec in specs
+        spec.optional && continue
+        sig = _build_sig(spec.arg_types, T)
+        hasmethod(spec.f, sig) || continue
+        for issue in _trim_issues(spec.f, sig)
+            push!(contract_issues, "  $(spec.description): $issue (trim-unsafe)")
+        end
+    end
+    issues_by_contract = Dict{Type, Vector{String}}()
+    if !isempty(contract_issues)
+        issues_by_contract[_registry_key(I)] = contract_issues
+        @warn "Trim-compatibility issues in $T (contract $I):\n" *
+            join(contract_issues, "\n")
+    end
+    return (
+        type = T,
+        contracts = collect(keys(issues_by_contract)),
+        issues = issues_by_contract,
+        passed = isempty(contract_issues),
+    )
+end
+
 # ── Proactive entry-point scan (trim_report) ──────────────────────────────────
 #
 # A fast, *advisory* pre-build check: scan the optimized+typed IR of an entry function

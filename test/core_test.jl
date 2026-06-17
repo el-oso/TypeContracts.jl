@@ -113,3 +113,37 @@
         @test_implements TCircle AbstractShape
     end
 end
+
+@testitem "check_contract(T, I) — structural check without subtyping" setup = [TCFixtures] begin
+    using Test
+    using TypeContracts
+
+    # A structural protocol: interface type that no user type subtypes.
+    abstract type AbstractProcessor end
+    function process end
+    @contract AbstractProcessor begin
+        process(::Self, ::String) :: Int
+    end
+
+    # A type that satisfies the contract structurally (no <: AbstractProcessor).
+    struct TextCounter end
+    process(::TextCounter, s::String)::Int = length(s)
+
+    # Structural check must pass.
+    @test_nowarn check_contract(TextCounter, AbstractProcessor)
+    r = check_contract(TextCounter, AbstractProcessor)
+    @test r.passed
+    @test r.type === TextCounter
+    @test AbstractProcessor in r.contracts
+
+    # @verify T for_contract=I must also pass.
+    @test_nowarn @verify TextCounter for_contract = AbstractProcessor
+
+    # A type that is missing the required method.
+    struct EmptyImpl end
+    @test_throws TypeContracts.InterfaceError check_contract(EmptyImpl, AbstractProcessor)
+
+    # No contract registered → ArgumentError.
+    abstract type NoContract end
+    @test_throws ArgumentError check_contract(TextCounter, NoContract)
+end

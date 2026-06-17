@@ -141,6 +141,8 @@ end
     @verify ConcreteType trim_compat=true
     @verify AbstractType subtypes=true
     @verify AbstractType subtypes=true trim_compat=true
+    @verify ConcreteType for_contract=InterfaceType
+    @verify ConcreteType for_contract=InterfaceType trim_compat=true
 
 Assert at module-load / precompile time that a type satisfies all mandatory
 contracts for its supertype chain. Checks both method existence and declared
@@ -162,22 +164,40 @@ With `subtypes=true`, verifies every concrete subtype of the given abstract
 type rather than the type itself. Equivalent to calling `@verify` on each
 concrete subtype individually, and self-maintaining as new subtypes are added.
 
+With `for_contract=I`, performs a **structural** check against the contract
+registered for `I` without requiring `T <: I`. Useful for Holy Trait / structural
+protocols where user types satisfy a contract's method signatures but do not and
+cannot subtype the interface type. Combining with `trim_compat=true` also checks
+that `T`'s implementations of `I`'s methods are juliac `--trim` compatible.
+
 Must be placed after all type and method definitions.
 """
 macro verify(T, kwargs...)
     trim_compat = false
     check_subtypes = false
+    for_contract = nothing
     for kw in kwargs
         if kw isa Expr && kw.head === :(=)
             if kw.args[1] === :trim_compat
                 trim_compat = kw.args[2]
             elseif kw.args[1] === :subtypes
                 check_subtypes = kw.args[2]
+            elseif kw.args[1] === :for_contract
+                for_contract = kw.args[2]
             end
         end
     end
     if check_subtypes
         return :(TypeContracts._verify_subtypes($(esc(T)); trim_compat = $(trim_compat)))
+    end
+    if for_contract !== nothing
+        return quote
+            let _verify_result = TypeContracts.check_contract($(esc(T)), $(esc(for_contract)))
+                push!(TypeContracts._revise_tracked_types, $(esc(T)))
+                $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)), $(esc(for_contract)))
+                _verify_result
+            end
+        end
     end
     return quote
         let _verify_result = TypeContracts.check_contract($(esc(T)))

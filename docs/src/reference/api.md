@@ -13,8 +13,10 @@ TypeContracts.@delegate
 ## Structural checks
 
 ```@docs
-TypeContracts.check_contract
-TypeContracts.check_trim_compat
+TypeContracts.check_contract(::Type)
+TypeContracts.check_contract(::Type, ::Type)
+TypeContracts.check_trim_compat(::Type)
+TypeContracts.check_trim_compat(::Type, ::Type)
 TypeContracts.satisfies
 TypeContracts.list_contract(::Type)
 TypeContracts.list_contract(::Type, ::Val{:all})

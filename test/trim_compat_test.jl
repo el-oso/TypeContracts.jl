@@ -64,3 +64,39 @@ end
     # The macro itself must not throw.
     @test (@verify VCleanImpl trim_compat = true; true)
 end
+
+@testitem "check_trim_compat(T, I) — structural trim check without subtyping" begin
+    using Test
+    using TypeContracts
+
+    # A structural protocol: no type subtypes this.
+    abstract type AbstractProcBoundary end
+    function boundary_call end
+    @contract AbstractProcBoundary begin
+        boundary_call(::Self) :: Int
+    end
+
+    # Clean structural implementation — no trim-unsafe calls.
+    struct CleanBoundaryImpl end
+    boundary_call(::CleanBoundaryImpl)::Int = 42
+    check_contract(CleanBoundaryImpl, AbstractProcBoundary)  # ensure method exists
+
+    r = check_trim_compat(CleanBoundaryImpl, AbstractProcBoundary)
+    @test r.passed
+    @test isempty(r.issues)
+
+    # Trim-unsafe structural implementation.
+    struct UnsafeBoundaryImpl end
+    boundary_call(::UnsafeBoundaryImpl)::Int =
+        Int(length(Base.return_types(boundary_call, Tuple{UnsafeBoundaryImpl})))
+    check_contract(UnsafeBoundaryImpl, AbstractProcBoundary)
+
+    r2 = check_trim_compat(UnsafeBoundaryImpl, AbstractProcBoundary)
+    @test !r2.passed
+    issue_text = join(Iterators.flatten(values(r2.issues)), " ")
+    @test occursin("return_types", issue_text)
+    @test occursin("boundary_call", issue_text)
+
+    # @verify T for_contract=I trim_compat=true must not throw for clean impl.
+    @test_nowarn @verify CleanBoundaryImpl for_contract = AbstractProcBoundary trim_compat = true
+end

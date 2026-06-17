@@ -29,7 +29,7 @@ function _attach_doc(::Type{T}) where {T}
                 filter!(!=(_DOC_SIG), multidoc.order)
             end
         end
-        docstr = Base.Docs.docstr(md, Dict{Symbol, Any}(:module => mod, :path => nothing, :linenumber => 0))
+        docstr = Base.Docs.docstr(md, Dict{Symbol, Any}(:module => mod, :path => "", :linenumber => 0))
         Base.Docs.doc!(mod, binding, docstr, _DOC_SIG)
     catch
         # Documentation is best-effort; never fatal.

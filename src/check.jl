@@ -59,6 +59,55 @@ function check_contract(T::Type)
     return (type = T, contracts = checked, passed = true)
 end
 
+"""
+    check_contract(T::Type, I::Type) -> NamedTuple{(:type, :contracts, :passed)}
+
+Structural variant: verify that `T` satisfies the mandatory contract for `I` without
+requiring `T <: I`. Useful for structural (Holy Trait) protocols where the implementing
+type does not and cannot subtype the interface type.
+
+Throws `InterfaceError` on failure. Uses `Base.return_types` — precompile-time only.
+"""
+function check_contract(T::Type, I::Type)
+    specs = _contract_specs(_registry_key(I))
+    isempty(specs) && throw(ArgumentError("no contract registered for $I"))
+    errors = String[]
+    for spec in specs
+        spec.optional && continue
+        sig = _build_sig(spec.arg_types, T)
+        if !hasmethod(spec.f, sig)
+            if !isempty(methods(spec.f, Tuple{T, Vararg{Any}}))
+                @warn "$(nameof(spec.f)) is defined for $T but its argument " *
+                    "types are more specific than the contract requires — " *
+                    "contract: $(spec.description). Widen the implementation's " *
+                    "argument types to match, or tighten the contract."
+            end
+            push!(errors, "  $(spec.description)  [required by $I]")
+        else
+            expected_rt = _resolve_rt_spec(T, spec)
+            if expected_rt !== Any
+                inferred_rts = Base.return_types(spec.f, sig)
+                inferred_rt = isempty(inferred_rts) ? Union{} :
+                    length(inferred_rts) == 1 ? inferred_rts[1] :
+                    Union{inferred_rts...}
+                if !(inferred_rt <: expected_rt)
+                    push!(
+                        errors,
+                        "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $I]"
+                    )
+                end
+            end
+        end
+    end
+    if !isempty(errors)
+        throw(InterfaceError(
+            "Type $T does not satisfy interface contract $I.\n" *
+            "Missing or incorrect methods:\n" * join(errors, "\n")
+        ))
+    end
+    return (type = T, contracts = [_registry_key(I)], passed = true)
+end
+
 function _concrete_subtypes(T::Type)
     result = Type[]
     for S in subtypes(T)

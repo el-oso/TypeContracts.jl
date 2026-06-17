@@ -28,7 +28,7 @@ function _attach_doc(::Type{T}) where {T}
         end
         docstr = Base.Docs.docstr(
             md,
-            Dict{Symbol, Any}(:module => mod, :path => nothing, :linenumber => 0),
+            Dict{Symbol, Any}(:module => mod, :path => "", :linenumber => 0),
         )
         Base.Docs.doc!(mod, binding, docstr, _DOC_SIG)
     catch
