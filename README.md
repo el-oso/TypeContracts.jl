@@ -1,4 +1,5 @@
 # TypeContracts.jl
+[![CI](https://github.com/el-oso/TypeContracts.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/el-oso/TypeContracts.jl/actions/workflows/CI.yml)
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://el-oso.github.io/TypeContracts.jl/dev/)
 
 Statically-checked interface contracts for abstract types in Julia.
@@ -38,6 +39,10 @@ Behavioral invariants (property-based testing on real objects) are also supporte
 **Abstract types only.** `@contract` requires its target to be an abstract type.
 
 ---
+
+## Development note
+
+This package was developed with assistance from [Claude](https://claude.ai) (Anthropic). All code has been reviewed and is maintained by the author.
 
 ## Requirements
 
