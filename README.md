@@ -1,5 +1,6 @@
 # TypeContracts.jl
 [![CI](https://github.com/el-oso/TypeContracts.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/el-oso/TypeContracts.jl/actions/workflows/CI.yml)
+[![Coverage](https://coveralls.io/repos/github/el-oso/TypeContracts.jl/badge.svg?branch=master)](https://coveralls.io/github/el-oso/TypeContracts.jl?branch=master)
 [![](https://img.shields.io/badge/docs-dev-blue.svg)](https://el-oso.github.io/TypeContracts.jl/dev/)
 
 Statically-checked interface contracts for abstract types in Julia.

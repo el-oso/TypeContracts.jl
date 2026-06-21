@@ -21,4 +21,12 @@ jobs:
       - name: Instantiate test project
         run: julia --project=test -e 'using Pkg; Pkg.develop(PackageSpec(path=".")); Pkg.instantiate()'
       - name: Run tests
-        run: julia --project=test test/runtests.jl
+        run: julia --project=test --code-coverage=user test/runtests.jl
+      - uses: julia-actions/julia-processcoverage@v1
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          file: lcov.info
+          format: lcov
+          fail-on-error: false
