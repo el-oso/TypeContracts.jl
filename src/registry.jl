@@ -138,6 +138,7 @@ function _extract_param(concrete_type::Type, ref::TypeParamRef)
 end
 
 function _resolve_rt_spec(concrete_type::Type, spec::MethodSpec)
+    spec.return_type_spec === Self && return concrete_type
     return spec.return_type_spec isa TypeParamRef ?
         _extract_param(concrete_type, spec.return_type_spec) :
         spec.return_type_spec

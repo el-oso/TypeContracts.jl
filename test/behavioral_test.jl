@@ -49,6 +49,14 @@
         @test all(r -> r.type == AbstractAnimal, result.results)
     end
 
+    @testset "test_behavior(T, S, objects) normalizes a parametric S" begin
+        # Invariants are registered on the wrapper `AbstractBucket`; passing the
+        # parameterized `AbstractBucket{Int}` must still find them.
+        result = test_behavior(IntBucket, AbstractBucket{Int}, [IntBucket([1, 2, 3])])
+        @test !isempty(result.results)
+        @test result.passed
+    end
+
     @testset "test_behavior catches exceptions in predicates" begin
         abstract type AbstractFailing end
 

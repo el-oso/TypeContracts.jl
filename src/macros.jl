@@ -124,6 +124,9 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
         $(func_stubs...)
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
+        isempty(TypeContracts._contract_specs($(esc(abstract_sym)))) ||
+            @warn "@contract: overwriting existing contract for $($(esc(abstract_sym))) — " *
+            "check for a conflicting @contract registration in another package"
         function TypeContracts._contract_specs(::Type{$(esc(abstract_sym))})
             return TypeContracts.MethodSpec[$(spec_exprs...)]
         end
@@ -315,6 +318,9 @@ macro invariants(T, block)
     end
 
     return quote
+        isempty(TypeContracts._behavior_specs($(esc(T)))) ||
+            @warn "@invariants: overwriting existing invariants for $($(esc(T))) — " *
+            "check for a conflicting @invariants registration in another package"
         function TypeContracts._behavior_specs(::Type{$(esc(T))})
             return TypeContracts.BehaviorSpec[$(spec_exprs...)]
         end
@@ -356,6 +362,11 @@ end
 function _resolve_rtype_exprs(rtype, type_vars::Dict{Symbol, Int}, abstract_sym::Symbol)
     if rtype === :Any
         return :(Any), :(Any)
+    elseif rtype === :Self
+        # Concrete type not known until check time — mirrors the TypeParamRef
+        # branch below. Fully-qualified so it resolves regardless of whether
+        # the registering module has `Self` in scope (unlike a bare `esc`).
+        return :(Any), :(TypeContracts.Self)
     elseif rtype isa Symbol && haskey(type_vars, rtype)
         idx = type_vars[rtype]
         return :(Any), :(TypeContracts.TypeParamRef($(esc(abstract_sym)), $idx))

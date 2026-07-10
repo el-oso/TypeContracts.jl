@@ -61,7 +61,7 @@
         end
     end
 
-    @testset "contract can be overwritten" begin
+    @testset "contract can be overwritten (warns)" begin
         abstract type AbstractTemp end
         function ttemp end
 
@@ -71,9 +71,11 @@
 
         @test length(list_contract(AbstractTemp)) == 1
 
-        @contract AbstractTemp begin
-            ttemp(::Self)
-            ttemp(::Self, ::Int)
+        @test_logs (:warn, r"overwriting existing contract for .*AbstractTemp") begin
+            @eval @contract AbstractTemp begin
+                ttemp(::Self)
+                ttemp(::Self, ::Int)
+            end
         end
 
         @test length(list_contract(AbstractTemp)) == 2

@@ -27,17 +27,19 @@ Provide a fallback implementation that implementors can skip or override.
 @contract Animal "An entity that can vocalize." begin
     speak(::Self)    :: String => "primary vocalization"
     :optional
-    describe(::Self) :: String => "human-readable label"
+    label(::Self)    :: String => "human-readable label"
 end
 # Contract block shows optional status but NOT the fallback body.
 # The fallback is a separate, structurally unlinked definition:
-describe(a::Animal) = string(typeof(a))
+label(a::Animal) = string(typeof(a))
 # — it could be here, in another file, or absent entirely.
+# (Named `label`, not `describe`, to avoid shadowing TC's own exported
+# `describe(T)` introspection function used below.)
 
 struct Dog <: Animal end
 speak(::Dog) = "woof"
 
-@verify Dog    # passes — speak present, describe optional
+@verify Dog    # passes — speak present, label optional
 
 # TC advantage: optional/required distinction is machine-readable.
 # satisfies(), describe(T), and ?-docs all surface it.
@@ -50,7 +52,7 @@ trait Animal {
     fn speak(&self) -> &str;
 
     // Default body — implementors may override
-    fn describe(&self) -> String {
+    fn label(&self) -> String {
         String::from(std::any::type_name::<Self>())
     }
 }
@@ -58,7 +60,7 @@ trait Animal {
 struct Dog;
 impl Animal for Dog {
     fn speak(&self) -> &str { "woof" }
-    // describe() uses the default body
+    // label() uses the default body
 }
 
 // Missing speak (no impl Animal for a type)
@@ -76,12 +78,12 @@ type Animal interface {
 
 // Common pattern: an embedded base struct provides defaults.
 type BaseAnimal struct{ Name string }
-func (b BaseAnimal) Describe() string { return b.Name }
+func (b BaseAnimal) Label() string { return b.Name }
 
 type Dog struct{ BaseAnimal }
 func (d Dog) Speak() string { return "woof" }
 
-// Describe is NOT part of the Animal interface —
+// Label is NOT part of the Animal interface —
 // Go has no way to mark a method as optional within an
 // interface and provide a default body for it.
 ```
@@ -92,7 +94,7 @@ func (d Dog) Speak() string { return "woof" }
     body against `Self` — it is a verified artifact, not a free-floating definition.
 
     TC splits this across two places: `:optional` in the `@contract` block declares that a method
-    is optional, but the fallback body is a separate `describe(::Animal)` method that could be
+    is optional, but the fallback body is a separate `label(::Animal)` method that could be
     defined anywhere — or not at all — with no error or warning. TC has a real advantage in the
     other direction: the optional/required distinction is **machine-readable** via `satisfies()`,
     `describe(T)`, and `?`-docs. Rust has no type-level query for "which methods have defaults."
@@ -186,20 +188,22 @@ Attach a formal contract to a type you don't own.
 using TypeContracts, BaseTypeContracts
 
 # Contracts already registered for Base types:
-satisfies(Vector{Int}, AbstractArray)      # true
-satisfies(Dict{String,Int}, AbstractDict)  # true
+implements(Vector{Int}, AbstractArray)      # true
+implements(Dict{String,Int}, AbstractDict)  # true
 
-# Retroactive contract on any abstract type —
-# including ones from Base or third-party packages,
-# no wrapper or modification needed:
-@contract AbstractSet "Finite mathematical set." begin
+# Retroactive contract on any abstract type you don't own — no wrapper
+# or modification to the original package needed. A fresh interface name
+# is used here rather than Base.AbstractSet, which BaseTypeContracts
+# already contracts — registering over it would silently overwrite that
+# package's contract (see "Contract coherence" in Key Differences).
+@contract AbstractFiniteSet "A finite mathematical set." begin
     Base.intersect(::Self, ::Self) :: Self
     Base.union(::Self, ::Self)     :: Self
     Base.issubset(::Self, ::Self)  :: Bool
 end
 
 # Check whether any set type satisfies it:
-satisfies(MyFancySet, AbstractSet)  # lists missing methods
+satisfies(MyFancySet, AbstractFiniteSet)  # lists missing methods
 ```
 
 #### Rust
@@ -262,16 +266,25 @@ Branch on whether a type satisfies an interface — statically, with zero runtim
 ```julia
 using TypeContracts, BaseTypeContracts
 
-# interface_trait is @generated — registry read at specialization
-# time; result baked into static IR. juliac --trim safe.
+# interface_trait is @generated — arg types and function objects were
+# baked in at macro-expansion time (no registry lookup); the generator
+# runs at specialization time, emitting a static chain of hasmethod()
+# calls. juliac --trim safe.
 function process(x::T) where T
     _process(x, interface_trait(Iterable, T))
 end
 _process(x, ::Implemented{Iterable})    = collect(x)
 _process(x, ::NotImplemented{Iterable}) = [x]
 
-process(rand(3))  # Implemented path  — zero-overhead dispatch
-process(42)       # NotImplemented path — zero-overhead dispatch
+struct Point
+    x::Float64
+    y::Float64
+end
+# Point has no `iterate` method, so it genuinely does not implement Iterable
+# (unlike numbers, which iterate as a single-element sequence).
+
+process(rand(3))      # Implemented path    — zero-overhead dispatch
+process(Point(1, 2))  # NotImplemented path — zero-overhead dispatch
 ```
 
 #### Rust
@@ -417,23 +430,26 @@ Attach semantic laws to an interface and verify them against real objects.
 #### Julia + TypeContracts
 
 ```julia
-using TypeContracts, BaseTypeContracts
+using TypeContracts
 
-# Structural contract already registered by BaseTypeContracts.
-# Add behavioral invariants — semantic laws on real instances:
-@invariants AbstractArray begin
-    "length equals product of size" =>
-        a -> length(a) == prod(size(a))
-    "first element has declared eltype" =>
-        a -> isempty(a) || eltype(a) == typeof(first(a))
-    :optional
-    "eachindex covers all elements" =>
-        a -> length(collect(eachindex(a))) == length(a)
+# Behavioral invariants — semantic laws on real instances, checked
+# independently of any structural @contract on the same type:
+struct Fraction
+    num::Int
+    den::Int
 end
 
-# Run structural + behavioral checks against real objects:
-test_behavior(Vector{Int}, AbstractArray,
-              [Int[], [1, 2, 3], rand(Int, 5)])
+@invariants Fraction begin
+    "denominator is never zero" =>
+        f -> f.den != 0
+    :optional
+    "already in lowest terms" =>
+        f -> gcd(f.num, f.den) == 1
+end
+
+# Run behavioral checks against real objects (test_behavior does not
+# re-run structural checks — pair it with satisfies()/@verify for that):
+test_behavior(Fraction, [Fraction(1, 2), Fraction(3, 4)])
 # (passed=true, results=[...], mandatory_failures=[])
 ```
 
@@ -565,12 +581,16 @@ const (North Direction = iota; South; East; West)
 ```
 
 !!! tip "Verdict — TC most powerful; Rust automatic"
-    Julia's `@generated` runs full Julia at specialization time: read registries, inspect the type
-    system, emit arbitrary IR — the most powerful of the three. Rust's monomorphization is
-    automatic for all generics and its procedural macros are powerful but operate on token streams,
-    not types. Go generics are intentionally limited: the body must be valid for all types
-    satisfying the constraint, and `go generate` is a separate build step entirely outside the
-    type system.
+    Julia's `@generated` can run essentially arbitrary Julia at specialization time — inspect the
+    type system, emit arbitrary IR — the most powerful of the three in principle. `interface_trait`
+    itself deliberately uses only a sliver of that power (concrete data baked in at macro-expansion
+    time, a static `hasmethod` chain emitted at specialization time — no registry lookup, no
+    closures, nothing that would violate the trimmer's world-age/purity assumptions) precisely
+    *because* the full power of `@generated` is unsound to use carelessly at runtime. Rust's
+    monomorphization is automatic for all generics and its procedural macros are powerful but
+    operate on token streams, not types. Go generics are intentionally limited: the body must be
+    valid for all types satisfying the constraint, and `go generate` is a separate build step
+    entirely outside the type system.
 
 ---
 
@@ -701,7 +721,18 @@ impl DataStore {
 ```go
 type DataStore struct{ backing map[string][]byte }
 
-// Go 1.18+ union constraint — compile-time gate.
+// Go 1.18+ generic constraints CAN gate on a method set at compile time —
+// this is not limited to type unions:
+type Bytesable interface{ Bytes() []byte }
+
+func StoreBytes[T Bytesable](ds *DataStore, key string, val T) {
+    ds.backing[key] = val.Bytes()
+}
+// StoreBytes(ds, "x", "hello") — compile error if string has no Bytes() method.
+
+// For *numeric* types specifically, Go has no operator-overloading trait,
+// so gating on "is a number" needs a union of concrete underlying types
+// instead of a method set:
 type Numeric interface {
     ~int | ~int32 | ~int64 | ~float32 | ~float64
 }
@@ -712,18 +743,17 @@ func Store[T Numeric](ds *DataStore, key string, val T) {
 
 // Store(ds, "x", "hello") — compile error:
 //   string does not satisfy Numeric
-
-// Limitation: Numeric is a union of concrete underlying types,
-// not a structural method contract — you cannot require
-// a specific method, only a specific type or underlying type.
 ```
 
-!!! tip "Verdict — Rust/TC tie; Go close"
-    Rust's trait bounds and TC's `interface_trait` both gate on named method-based contracts. Rust
-    fires at compile time; TC fires at load time (via `@verify`) or at runtime (the
-    `NotImplemented` branch). TC's two-branch design is trim-safe and more explicit. Go's generic
-    union constraints work for the positive case but express type lists, not method contracts — you
-    cannot require a specific method signature through a union constraint.
+!!! tip "Verdict — Rust wins; TC and Go both close, differently"
+    Rust's trait bounds enforce the full method signature at compile time — the strongest
+    guarantee of the three. TC's `interface_trait` fires at load time (via `@verify`) or at
+    runtime (the `NotImplemented` branch) and checks method *existence* only, not return
+    types — weaker than Rust's compile-time signature check. Go's generic constraints can gate
+    on a method set at compile time just as well as Rust for the general case; *numeric* gating
+    specifically needs a union of concrete underlying types, since Go has no operator-overloading
+    trait to express "supports +, -, *, /" as a method set — a domain-specific limitation, not a
+    general one.
 
 ---
 
@@ -734,14 +764,14 @@ func Store[T Numeric](ds *DataStore, key string, val T) {
 | 1 | Default/optional methods | `:optional` + separate fallback method; optional/required distinction machine-readable | default body co-located in `trait`; type-checked by compiler | no defaults; base-struct embedding; invisible to interface tooling | Rust co-location; TC queryability |
 | 2 | Interface hierarchies | abstract type chain; `@verify` checks all levels | `trait B: A` supertraits; separate `impl` per level | interface embedding | three-way tie |
 | 3 | Extending foreign types | retroactive `@contract` on any abstract type, no wrapper | wrapper only (orphan rule) | implicit if methods exist; wrapper if methods missing | TC advantage |
-| 4 | Type-level dispatch | `interface_trait` → static two-branch, trim-safe | trait bound (positive only; negative unstable) | runtime type switch only | TC advantage |
-| 5 | Delegation | `@delegate Wrapper :field Interface` — generates + verifies | manual `impl Trait`, every method by hand | struct embedding — all methods promoted automatically | Go best; TC close |
+| 4 | Type-level dispatch | `interface_trait` → static two-branch, trim-safe, existence-only (no return-type check) | trait bound (positive only; negative unstable) | runtime type switch only | TC advantage |
+| 5 | Delegation | `@delegate Wrapper :field Interface` — generates + verifies mandatory methods only | manual `impl Trait`, every method by hand | struct embedding — all methods promoted automatically | Go best; TC close |
 | 6 | Behavioral invariants | `@invariants` + `test_behavior` — part of interface | structural only; laws in docs/external tests | structural only; laws in docs/external tests | TC unique |
 | 7 | Compile-time codegen | `@generated` — full Julia at specialization time | automatic monomorphization; procedural macros on tokens | generic monomorphization; `go generate` is external | TC most powerful; Rust automatic |
 | 8 | Parametric constraints | `@contract AbstractType{T}`; T resolved + return types verified | generic traits + associated types + const generics | generic interfaces; no const generics | three-way tie |
-| 9 | Interface-gated methods | `interface_trait` + `InterfaceError` (load/runtime) | `where T: Trait` (compile-time) | union constraint; compile-time; no method requirements | Rust/TC tie; Go close |
+| 9 | Interface-gated methods | `interface_trait` + `InterfaceError` (existence-only; load/runtime) | `where T: Trait` (compile-time, full signature) | method-set or union constraint (compile-time) | Rust wins; TC and Go close |
 | — | Live re-checking | Revise.jl — re-checks all registered types after each edit, warns without throwing | enforced on every build | enforced on every build; `var _ I = T{}` | TC differentiator |
-| — | Static-binary compat | `interface_trait` trim-safe; `@verify T trim_compat=true` scans implementation IR | always compiled to native | always compiled to native | TC bridges Julia's dynamic gap |
+| — | Static-binary compat | `interface_trait` trim-safe by design; `@verify T trim_compat=true` runs a shallow heuristic IR scan (not an exhaustive proof) | always compiled to native | always compiled to native | TC bridges Julia's dynamic gap |
 
 ---
 
@@ -767,6 +797,16 @@ type — no wrapper needed. Go's implicit structural typing means a type that al
 methods satisfies a new interface automatically, but adding new methods to foreign types requires
 a wrapper. Rust's orphan rule prevents implementing a foreign trait for a foreign type entirely.
 
+**Contract coherence.** TC stores each `@contract`/`@invariants` registration as a single method
+on `_contract_specs`/`_behavior_specs` keyed by the abstract type — there is only one such
+registration per type. A second package registering `@contract` for a type another package
+already contracts does not merge with it; it overwrites it (`@contract` now emits a `@warn` when
+this happens, but two packages precompiling the same overwrite independently can still hard-error
+at precompile time). This is exactly the coherence problem Rust's orphan rule and Go's
+per-consumer interface declarations are designed to prevent: TC trades that safety for the
+ability to attach contracts to foreign types, and the tradeoff needs care in any ecosystem where
+more than one package might contract the same type.
+
 **Delegation.** Go struct embedding auto-promotes *all* methods of the embedded type with zero
 boilerplate. TC's `@delegate` generates forwarders for the registered contract methods in one
 line and immediately verifies conformance. Rust has no stable delegation shortcut: every trait
@@ -778,9 +818,10 @@ structural; invariants must live in documentation and be verified by external pr
 testing tools.
 
 **Two-branch dispatch.** TC's `interface_trait` + `Implemented`/`NotImplemented` gives static,
-trim-safe dispatch for both "satisfies" and "does not satisfy" at the same call site. Rust's
-generics handle the positive case statically but negative trait bounds are not stable. Go
-requires a runtime type switch for the two-branch pattern.
+trim-safe dispatch for both "satisfies" and "does not satisfy" at the same call site — but it
+checks method *existence* only, not return types, weaker than Rust's compile-time signature
+check for the positive case. Rust's generics handle the positive case statically but negative
+trait bounds are not stable. Go requires a runtime type switch for the two-branch pattern.
 
 **Live re-checking during development.** Loading [Revise.jl](https://github.com/timholy/Revise.jl)
 alongside TypeContracts re-checks all `@verify`-registered types after each edit, emitting
@@ -788,7 +829,16 @@ alongside TypeContracts re-checks all `@verify`-registered types after each edit
 latency model, but TC's approach uniquely fits Julia's interactive development workflow.
 
 **Static-binary compatibility.** Julia is JIT-compiled; producing a static binary via
-`juliac --trim` requires care. TC's `interface_trait` is `@generated` and trim-verified.
-`@verify T trim_compat=true` additionally scans typed IR for trim-unsafe calls in the
-implementation methods. Both Rust and Go compile directly to native code — static binary
-compatibility is the baseline, not a concern.
+`juliac --trim` requires care. TC's `interface_trait` is `@generated` and trim-safe *by design*
+(no CI job in this repo currently builds and runs an actual `juliac --trim` binary, so treat this
+as a strong design argument, not an empirical guarantee). `@verify T trim_compat=true`
+additionally runs a shallow, heuristic scan of typed IR for known trim-unsafe calls in the
+implementation methods — it can miss patterns it doesn't recognize. Both Rust and Go compile
+directly to native code — static binary compatibility is the baseline, not a concern.
+
+**Return-type checking is inference-dependent.** `check_contract`/`satisfies` resolve declared
+return types via `Base.return_types`, which can widen to a `Union` (or `Any`) for type-unstable
+methods — a correct implementation that happens to be type-unstable can fail a return-type check
+that neither Rust nor Go would ever attempt, since both check *declared*, not *inferred*, return
+types. `@verify_all` pays this inference cost for every concrete subtype in a module at load
+time, which can add up in modules with many implementers.

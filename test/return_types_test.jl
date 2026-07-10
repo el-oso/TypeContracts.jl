@@ -37,6 +37,15 @@
         @test check_contract(TUnann).passed
     end
 
+    @testset "Self return type resolves to the concrete implementing type" begin
+        @test check_contract(TCloneGood).passed
+        @test satisfies(TCloneGood, AbstractCloneable).satisfied
+
+        result = satisfies(TCloneBad, AbstractCloneable)
+        @test !result.satisfied
+        @test any(m -> occursin("⊄", m), result.missing_methods)
+    end
+
     @testset "@verify propagates return type check" begin
         threw = try
             @eval module VerifyReturnTypeFail

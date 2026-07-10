@@ -1,3 +1,39 @@
+# Shared by check_contract/satisfies: warn when `spec.f` has a method for `T` whose
+# argument types are more specific than the contract's (so `hasmethod` on the exact
+# contract signature fails even though an implementation clearly exists).
+function _warn_if_more_specific(spec::MethodSpec, T::Type)
+    isempty(methods(spec.f, Tuple{T, Vararg{Any}})) && return nothing
+    @warn "$(nameof(spec.f)) is defined for $T but its argument " *
+        "types are more specific than the contract requires — " *
+        "contract: $(spec.description). Widen the implementation's " *
+        "argument types to match, or tighten the contract."
+    return nothing
+end
+
+# Shared by check_contract/satisfies: infer `spec.f`'s return type for `sig`,
+# widening to a Union across all applicable methods (mirrors Base.return_types).
+function _inferred_return_type(spec::MethodSpec, sig)
+    inferred_rts = Base.return_types(spec.f, sig)
+    return isempty(inferred_rts) ? Union{} :
+        length(inferred_rts) == 1 ? inferred_rts[1] :
+        Union{inferred_rts...}
+end
+
+# Check one mandatory spec against `T`. Returns `nothing` on success, else an
+# error line naming the requiring type `required_by` (an abstract type or interface).
+function _check_spec(T::Type, spec::MethodSpec, required_by::Type)
+    sig = _build_sig(spec.arg_types, T)
+    if !hasmethod(spec.f, sig)
+        _warn_if_more_specific(spec, T)
+        return "  $(spec.description)  [required by $required_by]"
+    end
+    expected_rt = _resolve_rt_spec(T, spec)
+    expected_rt === Any && return nothing
+    inferred_rt = _inferred_return_type(spec, sig)
+    inferred_rt <: expected_rt && return nothing
+    return "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $required_by]"
+end
+
 """
     check_contract(T::Type) -> NamedTuple{(:type, :contracts, :passed)}
 
@@ -19,30 +55,8 @@ function check_contract(T::Type)
         push!(checked, _registry_key(S))
         for spec in specs
             spec.optional && continue
-            sig = _build_sig(spec.arg_types, T)
-            if !hasmethod(spec.f, sig)
-                if !isempty(methods(spec.f, Tuple{T, Vararg{Any}}))
-                    @warn "$(nameof(spec.f)) is defined for $T but its argument " *
-                        "types are more specific than the contract requires — " *
-                        "contract: $(spec.description). Widen the implementation's " *
-                        "argument types to match, or tighten the contract."
-                end
-                push!(errors, "  $(spec.description)  [required by $S]")
-            else
-                expected_rt = _resolve_rt_spec(T, spec)
-                if expected_rt !== Any
-                    inferred_rts = Base.return_types(spec.f, sig)
-                    inferred_rt = isempty(inferred_rts) ? Union{} :
-                        length(inferred_rts) == 1 ? inferred_rts[1] :
-                        Union{inferred_rts...}
-                    if !(inferred_rt <: expected_rt)
-                        push!(
-                            errors,
-                            "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $S]"
-                        )
-                    end
-                end
-            end
+            err = _check_spec(T, spec, S)
+            isnothing(err) || push!(errors, err)
         end
     end
 
@@ -74,36 +88,16 @@ function check_contract(T::Type, I::Type)
     errors = String[]
     for spec in specs
         spec.optional && continue
-        sig = _build_sig(spec.arg_types, T)
-        if !hasmethod(spec.f, sig)
-            if !isempty(methods(spec.f, Tuple{T, Vararg{Any}}))
-                @warn "$(nameof(spec.f)) is defined for $T but its argument " *
-                    "types are more specific than the contract requires — " *
-                    "contract: $(spec.description). Widen the implementation's " *
-                    "argument types to match, or tighten the contract."
-            end
-            push!(errors, "  $(spec.description)  [required by $I]")
-        else
-            expected_rt = _resolve_rt_spec(T, spec)
-            if expected_rt !== Any
-                inferred_rts = Base.return_types(spec.f, sig)
-                inferred_rt = isempty(inferred_rts) ? Union{} :
-                    length(inferred_rts) == 1 ? inferred_rts[1] :
-                    Union{inferred_rts...}
-                if !(inferred_rt <: expected_rt)
-                    push!(
-                        errors,
-                        "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $I]"
-                    )
-                end
-            end
-        end
+        err = _check_spec(T, spec, I)
+        isnothing(err) || push!(errors, err)
     end
     if !isempty(errors)
-        throw(InterfaceError(
-            "Type $T does not satisfy interface contract $I.\n" *
-            "Missing or incorrect methods:\n" * join(errors, "\n")
-        ))
+        throw(
+            InterfaceError(
+                "Type $T does not satisfy interface contract $I.\n" *
+                    "Missing or incorrect methods:\n" * join(errors, "\n")
+            )
+        )
     end
     return (type = T, contracts = [_registry_key(I)], passed = true)
 end
@@ -171,20 +165,12 @@ function satisfies(T::Type, S::Type)
     for spec in specs
         sig = _build_sig(spec.arg_types, T)
         if !hasmethod(spec.f, sig)
-            if !spec.optional && !isempty(methods(spec.f, Tuple{T, Vararg{Any}}))
-                @warn "$(nameof(spec.f)) is defined for $T but its argument " *
-                    "types are more specific than the contract requires — " *
-                    "contract: $(spec.description). Widen the implementation's " *
-                    "argument types to match, or tighten the contract."
-            end
+            spec.optional || _warn_if_more_specific(spec, T)
             push!(spec.optional ? missing_optional : missing_methods, spec.description)
         elseif !spec.optional
             expected_rt = _resolve_rt_spec(T, spec)
             if expected_rt !== Any
-                inferred_rts = Base.return_types(spec.f, sig)
-                inferred_rt = isempty(inferred_rts) ? Union{} :
-                    length(inferred_rts) == 1 ? inferred_rts[1] :
-                    Union{inferred_rts...}
+                inferred_rt = _inferred_return_type(spec, sig)
                 if !(inferred_rt <: expected_rt)
                     push!(
                         missing_methods,

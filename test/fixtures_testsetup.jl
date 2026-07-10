@@ -297,6 +297,10 @@ function blen end
     blen(::Self)::Int
 end
 
+@invariants AbstractBucket begin
+    "length is non-negative" => x -> blen(x) >= 0
+end
+
 struct IntBucket <: AbstractBucket{Int}
     data::Vector{Int}
 end
@@ -333,6 +337,25 @@ struct RTGood <: AbstractRT end
 rt_fn(::RTGood) = 1
 struct RTBad <: AbstractRT end
 
+# ── Self return type ─────────────────────────────────────────────────
+
+abstract type AbstractCloneable end
+function tclone end
+
+@contract AbstractCloneable begin
+    tclone(::Self)::Self
+end
+
+struct TCloneGood <: AbstractCloneable
+    v::Int
+end
+tclone(a::TCloneGood) = TCloneGood(a.v)
+
+struct TCloneBad <: AbstractCloneable
+    v::Int
+end
+tclone(::TCloneBad) = "not a TCloneBad"
+
 # ── Exports ───────────────────────────────────────────────────────────
 
 export AbstractShape, shape_area, shape_perimeter, shape_name, shape_color
@@ -350,5 +373,6 @@ export AbstractUnannotated, tunann, TUnann
 export AbstractBucket, bget, bset!, blen, IntBucket, WrongBucket
 export AbstractRepeat, rep_fn
 export AbstractRT, rt_fn, RTGood, RTBad
+export AbstractCloneable, tclone, TCloneGood, TCloneBad
 
 end

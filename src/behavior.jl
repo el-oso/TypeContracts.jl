@@ -135,7 +135,7 @@ function test_behavior(::Type{T}, ::Type{S}, objects) where {T, S}
         Tuple{Type, String, Bool, Bool, String},
     }[]
 
-    behaviors = _behavior_specs(S)
+    behaviors = _behavior_specs(_registry_key(S))
     !isempty(behaviors) && _run_behaviors!(results, S, behaviors, objects)
 
     mandatory_failures = filter(r -> !r.passed && !r.optional, results)
