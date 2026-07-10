@@ -31,6 +31,61 @@ interface_trait(AbstractShape, Circle)   # Implemented{AbstractShape}()
 interface_trait(AbstractShape, Int)      # NotImplemented{AbstractShape}()
 ```
 
+## `verified_trait(I, T)` — return-type-checked dispatch
+
+`interface_trait` deliberately checks method existence only — return types are never
+inspected, because `Base.return_types` cannot safely run inside a `@generated`
+function's generator (Julia forbids reflection there; it would mean recursive type
+inference). `verified_trait` closes that gap a different way: instead of checking
+anything itself, it reflects whatever [`@verify`](@ref)/`@verify_all`/[`@delegate`](@ref)
+already verified — including return types — at the moment verification succeeded.
+
+```julia
+verified_trait(::Type{I}, ::Type{T}) -> Implemented{I} | NotImplemented{I}
+```
+
+`@verify T` runs `check_contract(T)` (method existence **and** declared return types,
+via Julia's type inferencer) and, on success, seals in a concrete
+`verified_trait(::Type{I}, ::Type{T}) = Implemented{I}()` method for every interface
+`T`'s supertype chain registers. A type that was never `@verify`'d — even one that
+would satisfy the contract structurally — gets `NotImplemented{I}()` from the generic
+fallback:
+
+```julia
+struct Square <: AbstractShape; side::Float64 end
+area(s::Square)::Float64      = s.side^2
+perimeter(s::Square)::Float64 = 4 * s.side
+
+interface_trait(AbstractShape, Square)   # Implemented{AbstractShape}() — methods exist
+verified_trait(AbstractShape, Square)    # NotImplemented{AbstractShape}() — never @verify'd
+
+@verify Square
+verified_trait(AbstractShape, Square)    # Implemented{AbstractShape}() — sealed
+```
+
+This is a **nominal, opt-in** guarantee — the same shape as Rust's `impl Trait for T`
+or Go's `var _ I = T{}` assertion — not a structural one. Skipping `@verify` means
+`verified_trait` reads `NotImplemented` even for a type that's actually fine; TC cannot
+force every implementer through a check the way a compiler's coherence rules can.
+
+Sealing is a plain method definition emitted at verification time (module load /
+precompile), strictly more specific than the generic fallback, so dispatch resolves it
+statically — same zero-allocation, `juliac --trim`-safe shape as `interface_trait`, with
+no new runtime cost.
+
+**When to use which:**
+- `interface_trait` — "does a method with this signature exist," always available,
+  no setup required.
+- `verified_trait` — "has this exact `(interface, type)` pair been fully verified,
+  including return types," for call sites where a wrong return type must never reach
+  `Implemented`.
+
+**Revise caveat.** Redefining an implementation method after `@verify` leaves the
+sealed `verified_trait` method in place until `T` is re-verified — the
+[Revise integration](revise.md) warns on the resulting contract violation but does not
+automatically unseal it. In an interactive session under active edits, prefer
+`interface_trait` or re-run `@verify` after changes.
+
 ## `Implemented{I}` and `NotImplemented{I}`
 
 Plain singleton structs with no fields, exported by TypeContracts:

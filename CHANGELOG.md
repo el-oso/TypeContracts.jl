@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-07-11
+
+### Added
+
+- `verified_trait(::Type{I}, ::Type{T})` — a second trait-dispatch function alongside
+  `interface_trait`. Where `interface_trait` checks method *existence* only,
+  `verified_trait` reflects the full `check_contract` result (existence **and**
+  declared return types) at the moment verification succeeded. `@verify`, `@verify_all`,
+  and `@delegate` now seal a concrete `verified_trait(::Type{I}, ::Type{T}) =
+  Implemented{I}()` method after a successful check — sealing is automatic, no new
+  keyword needed. Unverified `(I, T)` pairs fall through to `NotImplemented{I}()`.
+  Same zero-allocation, `juliac --trim`-safe shape as `interface_trait`; see the new
+  "Verified traits" section in `docs/src/guide/traits.md` for the full guarantee and
+  its opt-in / Revise-staleness caveats.
+- `docs/src/examples/julia-rust-go.md` Section 9 ("Interface-Gated Methods") now
+  documents `verified_trait` as closing the return-type-checking gap against Rust for
+  `@verify`'d types, including why `Base.return_types` cannot simply be called from
+  inside `interface_trait`'s `@generated` generator (Julia disallows reflection there).
+
 ## [0.14.1] - 2026-07-10
 
 ### Fixed

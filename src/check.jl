@@ -114,11 +114,12 @@ function _concrete_subtypes(T::Type)
     return result
 end
 
-function _verify_subtypes(T::Type; trim_compat::Bool = false)
+function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
     concrete = _concrete_subtypes(T)
     isempty(concrete) && @warn "@verify subtypes=true: no concrete subtypes found for $T"
     for S in concrete
         check_contract(S)
+        _seal_verified!(mod, S)
         trim_compat && check_trim_compat(S)
     end
     return (type = T, subtypes_checked = concrete, passed = true)

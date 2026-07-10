@@ -46,6 +46,7 @@ TypeContracts.registered_behaviors
 
 ```@docs
 TypeContracts.interface_trait
+TypeContracts.verified_trait
 TypeContracts.Implemented
 TypeContracts.NotImplemented
 ```

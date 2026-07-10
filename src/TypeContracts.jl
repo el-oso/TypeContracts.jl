@@ -22,7 +22,7 @@ using .TrimDiagnostics: TrimDiagnostics, TrimFailure, explain_trim_failure
 export TrimDiagnostics, TrimFailure, explain_trim_failure
 
 include("trait.jl")
-export interface_trait
+export interface_trait, verified_trait
 
 include("behavior.jl")
 export test_behavior, behavior_passes, @test_implements, @test_behavior_passes

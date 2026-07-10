@@ -755,6 +755,42 @@ func Store[T Numeric](ds *DataStore, key string, val T) {
     trait to express "supports +, -, *, /" as a method set — a domain-specific limitation, not a
     general one.
 
+**Closing the gap: `verified_trait`.** `Base.return_types` cannot be called from inside
+`interface_trait`'s `@generated` generator — Julia forbids reflection there, since a generator
+already runs *inside* type inference and recursive inference is unsupported. So `interface_trait`
+itself cannot be made return-type-aware. Instead, TC adds a second dispatch function,
+`verified_trait`, that reflects whatever `@verify`/`@verify_all`/`@delegate` already fully
+checked — existence *and* return types — sealed in as a concrete, zero-cost method the moment
+verification succeeds:
+
+```julia
+abstract type AbstractShape end
+@contract AbstractShape begin
+    area(::Self) :: Float64
+end
+
+struct Square <: AbstractShape
+    side::Float64
+end
+area(s::Square) = s.side^2
+
+verified_trait(AbstractShape, Square)  # NotImplemented{AbstractShape}() — not yet @verify'd
+
+@verify Square    # check_contract verifies existence + return type; on success, seals
+                  # verified_trait(AbstractShape, Square) = Implemented{AbstractShape}()
+
+verified_trait(AbstractShape, Square)  # Implemented{AbstractShape}() — matches Rust's guarantee
+```
+
+For a `@verify`'d type, this **matches Rust**: full signature checked before the binary is even
+produced, a violation aborts the build, and the dispatch site sees a compile-time constant — not
+merely earlier detection, but the same class of guarantee. It does not universally *beat* Rust,
+for one structural reason: it is opt-in. A type nobody ran `@verify` on reads as `NotImplemented`
+even if it would satisfy the contract, whereas Rust's coherence rules force every implementer
+through the check. `interface_trait` is unchanged and still the right choice when no such
+opt-in step fits the workflow. See [Trait Dispatch](../guide/traits.md) for the full guarantee,
+including the Revise-session staleness caveat.
+
 ---
 
 ## Summary
@@ -769,7 +805,7 @@ func Store[T Numeric](ds *DataStore, key string, val T) {
 | 6 | Behavioral invariants | `@invariants` + `test_behavior` — part of interface | structural only; laws in docs/external tests | structural only; laws in docs/external tests | TC unique |
 | 7 | Compile-time codegen | `@generated` — full Julia at specialization time | automatic monomorphization; procedural macros on tokens | generic monomorphization; `go generate` is external | TC most powerful; Rust automatic |
 | 8 | Parametric constraints | `@contract AbstractType{T}`; T resolved + return types verified | generic traits + associated types + const generics | generic interfaces; no const generics | three-way tie |
-| 9 | Interface-gated methods | `interface_trait` + `InterfaceError` (existence-only; load/runtime) | `where T: Trait` (compile-time, full signature) | method-set or union constraint (compile-time) | Rust wins; TC and Go close |
+| 9 | Interface-gated methods | `interface_trait` (existence-only) or `verified_trait` (full signature, opt-in via `@verify`) + `InterfaceError` | `where T: Trait` (compile-time, full signature) | method-set or union constraint (compile-time) | Rust wins on `interface_trait`; matches on `verified_trait` for `@verify`'d types |
 | — | Live re-checking | Revise.jl — re-checks all registered types after each edit, warns without throwing | enforced on every build | enforced on every build; `var _ I = T{}` | TC differentiator |
 | — | Static-binary compat | `interface_trait` trim-safe by design; `@verify T trim_compat=true` runs a shallow heuristic IR scan (not an exhaustive proof) | always compiled to native | always compiled to native | TC bridges Julia's dynamic gap |
 
@@ -820,8 +856,10 @@ testing tools.
 **Two-branch dispatch.** TC's `interface_trait` + `Implemented`/`NotImplemented` gives static,
 trim-safe dispatch for both "satisfies" and "does not satisfy" at the same call site — but it
 checks method *existence* only, not return types, weaker than Rust's compile-time signature
-check for the positive case. Rust's generics handle the positive case statically but negative
-trait bounds are not stable. Go requires a runtime type switch for the two-branch pattern.
+check for the positive case. `verified_trait` closes that gap for types that were explicitly
+`@verify`'d (see "Interface-Gated Methods" above), at the cost of being opt-in rather than
+automatic. Rust's generics handle the positive case statically but negative trait bounds are not
+stable. Go requires a runtime type switch for the two-branch pattern.
 
 **Live re-checking during development.** Loading [Revise.jl](https://github.com/timholy/Revise.jl)
 alongside TypeContracts re-checks all `@verify`-registered types after each edit, emitting

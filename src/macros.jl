@@ -191,12 +191,13 @@ macro verify(T, kwargs...)
         end
     end
     if check_subtypes
-        return :(TypeContracts._verify_subtypes($(esc(T)); trim_compat = $(trim_compat)))
+        return :(TypeContracts._verify_subtypes($(esc(T)), @__MODULE__; trim_compat = $(trim_compat)))
     end
     if for_contract !== nothing
         return quote
             let _verify_result = TypeContracts.check_contract($(esc(T)), $(esc(for_contract)))
                 push!(TypeContracts._revise_tracked_types, $(esc(T)))
+                TypeContracts._seal_verified!(@__MODULE__, $(esc(T)), $(esc(for_contract)))
                 $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)), $(esc(for_contract)))
                 _verify_result
             end
@@ -205,6 +206,7 @@ macro verify(T, kwargs...)
     return quote
         let _verify_result = TypeContracts.check_contract($(esc(T)))
             push!(TypeContracts._revise_tracked_types, $(esc(T)))
+            TypeContracts._seal_verified!(@__MODULE__, $(esc(T)))
             $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)))
             _verify_result
         end
@@ -272,6 +274,7 @@ function _verify_all_in_module(mod::Module; trim_compat::Bool = false)
         any(S -> !isempty(_contract_specs(_registry_key(S))), supertypes(val)) || continue
         val in checked && continue
         check_contract(val)
+        _seal_verified!(mod, val)
         trim_compat && check_trim_compat(val)
         push!(checked, val)
     end
@@ -542,6 +545,7 @@ macro delegate(T_expr, field_expr, I_expr)
             end
         end
     )
+    push!(body, :(TypeContracts._seal_verified!(@__MODULE__, $(esc(wrapper_sym)), $I_val)))
     push!(body, :nothing)
     return Expr(:block, body...)
 end

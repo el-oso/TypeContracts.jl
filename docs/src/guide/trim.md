@@ -12,10 +12,15 @@ rejects any call that is not statically resolvable — every argument type must 
 so the compiler knows exactly which method to dispatch to. A call that infers to `Any`
 ("dynamic dispatch") is rejected with a verifier error.
 
-## `interface_trait` is the only runtime-safe function
+## `interface_trait` and `verified_trait` are the runtime-safe functions
 
-`interface_trait(I, T)` is the only TypeContracts function designed to be called at
-runtime in a trimmed binary. Two interlocking properties make it trim-safe:
+`interface_trait(I, T)` and `verified_trait(I, T)` are the two TypeContracts functions
+designed to be called at runtime in a trimmed binary. They answer different questions:
+`interface_trait` checks method *existence* only; `verified_trait` reflects whatever
+`@verify`/`@verify_all`/`@delegate` already fully verified — including return types —
+sealed in as a concrete method at verification time (see [Trait Dispatch](traits.md) for
+the guarantee it provides and its opt-in caveat). Both share the same two interlocking
+properties that make `interface_trait` trim-safe:
 
 **Reason 1 — it only uses `hasmethod`.**
 The check inside `interface_trait` is purely `hasmethod(f, Tuple{ConcretType, ...})`.
@@ -39,6 +44,13 @@ parametric contracts, `Self` and type parameters resolve against the concrete ty
 generation, so the result is equally concrete. From the trimmer's perspective this is just
 a conjunction of concrete `hasmethod` calls — statically resolvable.
 
+`verified_trait` reaches the same shape a different way: `@verify T` emits a plain,
+non-generated method `verified_trait(::Type{I}, ::Type{T}) = Implemented{I}()` for each
+interface `T` was checked against — a literal singleton, no computation at all, strictly
+more specific than the generic `NotImplemented` fallback. `Base.return_types` (used to
+check declared return types) runs once, in `check_contract`, at `@verify` time — never in
+the emitted method, so nothing return-type-related ever reaches the trimmed binary.
+
 ## `@verify` at module top level is safe
 
 `@verify` and `@verify_all` placed at **module top level** are safe in juliac binaries.
@@ -55,7 +67,8 @@ that runs at binary runtime** (e.g. an entry point or inside `__init__`). That e
 | Function | Trim-safe at runtime? | Notes |
 |---|---|---|
 | `interface_trait` | ✓ Yes | Designed for runtime dispatch in trimmed binaries |
-| `@verify`, `@verify_all` | ✓ Yes (module top level) | Eliminated by trimmer; safe to leave in |
+| `verified_trait` | ✓ Yes | Designed for runtime dispatch; only `Implemented` for `@verify`'d types |
+| `@verify`, `@verify_all`, `@delegate` | ✓ Yes (module top level) | Eliminated by trimmer; safe to leave in |
 | `check_contract` | ✗ No | Uses `Base.return_types` — test time only |
 | `satisfies` | ✗ No | Uses `Base.return_types` — test time only |
 | `implements` | ✗ No | Uses `Base.return_types` — test time only |
