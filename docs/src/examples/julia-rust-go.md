@@ -776,8 +776,10 @@ area(s::Square) = s.side^2
 
 verified_trait(AbstractShape, Square)  # NotImplemented{AbstractShape}() — not yet @verify'd
 
-@verify Square    # check_contract verifies existence + return type; on success, seals
-                  # verified_trait(AbstractShape, Square) = Implemented{AbstractShape}()
+@verify Square    # the only line you add — check_contract verifies existence + return
+                  # type, and on success seals verified_trait(AbstractShape, Square) =
+                  # Implemented{AbstractShape}(). verified_trait itself is never written
+                  # by hand, only called — the same way interface_trait already is.
 
 verified_trait(AbstractShape, Square)  # Implemented{AbstractShape}() — matches Rust's guarantee
 ```

@@ -49,7 +49,14 @@ via Julia's type inferencer) and, on success, seals in a concrete
 `verified_trait(::Type{I}, ::Type{T}) = Implemented{I}()` method for every interface
 `T`'s supertype chain registers. A type that was never `@verify`'d — even one that
 would satisfy the contract structurally — gets `NotImplemented{I}()` from the generic
-fallback:
+fallback.
+
+**You write `@verify`; you never write `verified_trait`.** `@verify T` is the only
+thing you add to your code — it plays the same role `@contract` plays for
+`interface_trait`: a one-time declaration that makes a method exist. `verified_trait`
+itself is a *read*, called at a dispatch site exactly like `interface_trait` is —
+never something you define. The two are not parallel steps you maintain; `@verify`
+is the write, `verified_trait` is the query against what it wrote:
 
 ```julia
 struct Square <: AbstractShape; side::Float64 end
@@ -59,8 +66,23 @@ perimeter(s::Square)::Float64 = 4 * s.side
 interface_trait(AbstractShape, Square)   # Implemented{AbstractShape}() — methods exist
 verified_trait(AbstractShape, Square)    # NotImplemented{AbstractShape}() — never @verify'd
 
-@verify Square
-verified_trait(AbstractShape, Square)    # Implemented{AbstractShape}() — sealed
+@verify Square                           # ← the only line you add
+verified_trait(AbstractShape, Square)    # Implemented{AbstractShape}() — now reads Implemented
+```
+
+Used in the same two-method dispatch pattern as [`interface_trait`](@ref) above —
+`@verify` is the setup, `verified_trait` is the same kind of call `interface_trait`
+already was:
+
+```julia
+_render(::Implemented{AbstractShape},    x) = "shape: area=$(round(area(x); digits=2))"
+_render(::NotImplemented{AbstractShape}, x) = "not a verified shape: $(typeof(x))"
+
+render(x) = _render(verified_trait(AbstractShape, typeof(x)), x)
+
+@verify Square   # run once, wherever Square is defined — not per call site
+
+render(Square(3.0))   # "shape: area=9.0"
 ```
 
 This is a **nominal, opt-in** guarantee — the same shape as Rust's `impl Trait for T`
@@ -77,8 +99,8 @@ no new runtime cost.
 - `interface_trait` — "does a method with this signature exist," always available,
   no setup required.
 - `verified_trait` — "has this exact `(interface, type)` pair been fully verified,
-  including return types," for call sites where a wrong return type must never reach
-  `Implemented`.
+  including return types" — requires `@verify` once per type, then it's called at
+  dispatch sites exactly like `interface_trait` is.
 
 **Revise caveat.** Redefining an implementation method after `@verify` leaves the
 sealed `verified_trait` method in place until `T` is re-verified — the
