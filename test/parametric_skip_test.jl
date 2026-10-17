@@ -80,6 +80,19 @@
         @test verified_trait(PSSubOwner.AbstractBoxS, PSSubOwner.BadBox) === NotImplemented{PSSubOwner.AbstractBoxS}()
     end
 
+    @testset "a parametric @delegate wrapper silences the warning" begin
+        @test_logs @eval module PSDel
+        using TypeContracts, ..PSOwner
+        struct Inner <: PSOwner.AbstractBucketP{Int} end
+        PSOwner.get1(::Inner) = 1
+        struct Wr{T} <: PSOwner.AbstractBucketP{T}
+            inner::Inner
+        end
+        @delegate Wr :inner PSOwner.AbstractBucketP
+        @verify_all
+        end
+    end
+
     @testset "the Revise re-check skips parametric types silently" begin
         @test_logs TypeContracts._revise_check_module(PSBad)
     end

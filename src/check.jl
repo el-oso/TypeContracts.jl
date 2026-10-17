@@ -123,8 +123,9 @@ function _first_contract(T::Type)
     return nothing
 end
 
-# True when some concrete instance of `T`'s type constructor has a sealed
-# `verified_trait(::Type{K}, ::Type{X})` method.
+# True when `T`'s type constructor has a sealed `verified_trait(::Type{K}, ::Type{X})`
+# method, for a concrete instance `X` or for the bare name itself (as sealed by
+# `@delegate` on a parametric wrapper or an explicit `@verify` of the bare name).
 function _has_verified_instance(T::Type)
     name = Base.unwrap_unionall(T).name
     for m in methods(verified_trait)
@@ -133,6 +134,7 @@ function _has_verified_instance(T::Type)
         p isa DataType && p <: Type || continue
         X = p.parameters[1]
         X isa DataType && isconcretetype(X) && X.name === name && return true
+        X isa UnionAll && Base.unwrap_unionall(X).name === name && return true
     end
     return false
 end
