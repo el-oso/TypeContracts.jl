@@ -263,22 +263,12 @@ macro verify_all(kwargs...)
 end
 
 function _verify_all_in_module(mod::Module; trim_compat::Bool = false)
-    checked = Type[]
-
-    for name in names(mod, all = true)
-        isdefined(mod, name) || continue
-        val = getfield(mod, name)
-        val isa Type || continue
-        isabstracttype(val) && continue
-        parentmodule(val) === mod || continue
-        any(S -> !isempty(_contract_specs(_registry_key(S))), supertypes(val)) || continue
-        val in checked && continue
-        check_contract(val)
-        _seal_verified!(mod, val)
-        trim_compat && check_trim_compat(val)
-        push!(checked, val)
+    checked = _contract_types_in_module(mod, "@verify_all")
+    for T in checked
+        check_contract(T)
+        _seal_verified!(mod, T)
+        trim_compat && check_trim_compat(T)
     end
-
     return (types = checked, passed = true)
 end
 

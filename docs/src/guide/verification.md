@@ -86,6 +86,32 @@ end
 
 `@verify_all` is scoped to the calling module (`parentmodule(T) === @__MODULE__`). Subtypes defined in other modules require their own `@verify` or `@verify_all` call.
 
+### Parametric types
+
+A contract can only be checked against a concrete type. For `struct Bucket{T} <: AbstractBucket{T}`, the name `Bucket` is not concrete: its parameter is unknown, so a declared return type such as `:: T` could not be checked. `@verify_all` and `@verify AbstractBucket subtypes=true` therefore skip `Bucket` and warn:
+
+```
+┌ Warning: @verify_all skipped Bucket: it is parametric, and its contract can only be
+│ checked for concrete parameters.
+│ To check it, add `@verify` for each instance your code uses, before `@verify_all`:
+│     @verify Bucket{Int}
+│ Any verified instance also silences this warning. If the contract does not depend
+│ on the parameter, one representative instance is enough.
+│   type = Bucket
+│   contract = AbstractBucket
+└ @ TypeContracts ...
+```
+
+To check the type and silence the warning, verify the instances your code uses before `@verify_all`:
+
+```julia
+@verify Bucket{Int}
+@verify Bucket{Float64}
+@verify_all
+```
+
+`verified_trait(AbstractBucket, Bucket{Int})` then returns `Implemented`. A subtype that fixes the parameter, such as `struct IntBucket <: AbstractBucket{Int}`, is concrete and is checked by `@verify_all` as usual.
+
 ## `check_contract(T)` — throwing check
 
 For use in tests or in a Julia session. Throws [`InterfaceError`](@ref) if `T` violates any mandatory contract in its supertype chain; returns a named tuple `(type, contracts, passed)` on success.
