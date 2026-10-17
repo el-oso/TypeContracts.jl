@@ -1,9 +1,11 @@
 # `contract_signatures` and the verify hook
 
-Two additions to TypeContracts. Both are dev/precompile-time tools, and neither changes the `@contract`, `@verify`, `@verify_all` or `@delegate` syntax.
+Two additions and two fixes, released together as 0.14.1. All of them are dev/precompile-time behavior, and none changes the `@contract`, `@verify`, `@verify_all` or `@delegate` syntax. None is breaking.
 
 - **A. `contract_signatures(mod; optional = false)`** lists the resolved signature of every contract method, for each concrete contract type defined in `mod`.
 - **B. `_verify_hook(::_VerifyHook, mod, T, result)`** is a dispatch hook. Every verification path calls it once per verified type after the check passes.
+- **C. Parametric types are skipped, not falsely verified.** `@verify_all`, `@verify T subtypes=true` and the Revise re-check stop treating a bare parametric name (a `UnionAll`) as a concrete type.
+- **D. The Revise re-check warns on every exception**, not only on `InterfaceError`.
 
 The first consumer is StrictMode.jl, which depends on TypeContracts. TypeContracts gains no dependency on StrictMode. Neither addition does any performance analysis.
 
@@ -15,7 +17,7 @@ contract_signatures(mod::Module; optional::Bool = false)
                           T::Type, contract::Type, mandatory::Bool}}
 ```
 
-**Which types.** It covers the same set of types that `@verify_all` checks in `mod`: names bound in `mod`, not abstract, with `parentmodule(T) === mod`, and with at least one supertype that has a registered contract. Contracts on foreign types are included, for example a type in `mod` that subtypes `AbstractVector` when `@contract AbstractVector{T}` is registered.
+**Which types.** It covers the same set of types that `@verify_all` checks in `mod` (see C): names bound in `mod`, `isconcretetype`, with `parentmodule(T) === mod`, and with at least one supertype that has a registered contract. Bare parametric names are left out, so every entry has fully resolved type parameters. Contracts on foreign types are included, for example a type in `mod` that subtypes `AbstractVector` when `@contract AbstractVector{T}` is registered.
 
 **One entry** for each `(T, contract in T's supertype chain, method spec)` triple:
 
@@ -63,19 +65,42 @@ If the hook throws, the exception propagates and that type is not sealed. A fail
 
 **Exported?** No. The hook is internal-named, like the existing hooks, and is documented in `reference/api.md` under a new "Extension hooks" heading.
 
+## C. Parametric types in the bulk paths
+
+**Current behavior.** `_concrete_subtypes`, `_verify_all_in_module` and `_revise_check_module` each skip a type only when `isabstracttype` is true. A bare parametric name such as `Bucket` (from `struct Bucket{T} <: AbstractBucket{T}`) is a `UnionAll`, for which `isabstracttype` is `false`, so it gets checked as if it were concrete. A `TypeParamRef` then resolves to `Any`, so the return-type check is skipped and a wrong return type passes. The seal is also placed on `Bucket` itself, so `verified_trait(AbstractBucket, Bucket{Int})` returns `NotImplemented`.
+
+**New behavior.** All three paths use one shared function, `_contract_types_in_module(mod)`; `_concrete_subtypes` uses the same predicate. A type is checked only if `isconcretetype(T)` is true. A non-abstract type that fails that test is skipped with one `@warn`:
+
+```
+┌ Warning: @verify_all skipped Bucket: it is parametric, and its contract can only be
+│ checked for concrete parameters.
+│ To check it, add `@verify` for each instance your code uses, before `@verify_all`:
+│     @verify Bucket{Int}
+│     @verify Bucket{Float64}
+│ Any verified instance also silences this warning. If the contract does not depend
+│ on the parameter, one representative instance is enough.
+└ type = Bucket, contract = AbstractBucket
+```
+
+The example instance uses `Int` for each type parameter. Its only purpose is to show the syntax, so the message says "for each instance your code uses" rather than suggesting `Int` is right. For `subtypes=true` the first line reads `@verify AbstractBucket subtypes=true skipped Bucket: …`.
+
+**Silencing the warning.** The warning is not emitted when at least one concrete instance of the type has already been verified. TypeContracts checks this by looking for a sealed `verified_trait` method whose second argument is `Type{X}`, where `X` is a concrete instance of the same type (same `Base.unwrap_unionall(T).name`). It reads the method table and keeps no new state. Because `@verify_all` goes at the end of a module, an earlier `@verify Bucket{Int}` silences it. The Revise re-check skips parametric names without warning, since `@verify_all` already warned at load time.
+
+## D. Revise re-check exceptions
+
+`_check_contract_warn` warns `"Contract violation detected by Revise"` on an `InterfaceError` and `"Contract re-check failed"`, with the exception and backtrace, on any other exception. Before this change, other exceptions were dropped without a message. With the hook (B) in this path, that would also hide hook bugs.
+
 ## Testing
 
 New test file `test/introspection_signatures_test.jl` (A) and additions to `test/verify_all_test.jl` (B).
 
 - A: a plain contract; `Self` in a non-first position; a parametric contract (`TypeParamRef` resolved in both `sig` and `return_type`); a foreign-type contract with its subtype in the test module; the `optional` flag; and a consistency check that `hasmethod(e.f, e.sig)` holds for every entry of a module that passes `@verify_all`.
 - B: the hook runs once per type, with the right `mod`/`T`/`result`, for each of the five paths; a throwing hook makes `@verify` throw, and `verified_trait` stays `NotImplemented`; the Revise path turns a hook exception into a `@warn` (tested with `@test_logs`); with no hook defined, behavior is unchanged (the existing suite covers this).
+- C: a parametric type with a wrong return type is skipped with the warning by both `@verify_all` and `subtypes=true`, and is not sealed; after `@verify Bad{Int}` it is skipped without a warning; a non-parametric concrete type is still checked; `contract_signatures` omits the bare name.
+- D: `test/revise_check_test.jl` (already written): an `InterfaceError` gives the violation warning, and a `MethodError` (from `check_contract(Union{})`) gives the "re-check failed" warning.
+
+**Test runner.** On Julia 1.13.2, ReTestItems fails before running any item (`MethodError: setindex!(::ScopedValue{Bool}, ::Bool)` in `_runtests_in_current_env`), and the MCP test runner does not recognize the ReTestItems `@testsetup` fixtures. Until that is resolved, items are run by evaluating their bodies in a warm session. The full-suite gate before release has to run on a Julia version where ReTestItems works. Checking whether 1.12 is such a version is the first step of the implementation plan.
 
 ## Release
 
-CHANGELOG entry under a new version. Both additions are additive.
-
-## Open questions
-
-1. **Version number:** 0.15.0 or 0.14.1? 0.14.0 is the latest registry release.
-2. **The Revise re-check swallows non-`InterfaceError` exceptions without a word.** `_check_contract_warn` does `catch e; e isa InterfaceError && @warn …; end`, so any other exception disappears. With a hook in that path, a hook bug would vanish the same way. I propose warning on every exception there, with the exception and type shown. This would be a small fix in the same change.
-3. **Parametric types bound by name:** `struct Bucket{T} <: AbstractBucket{T}` binds a `UnionAll`. I haven't checked how `@verify_all` currently treats it. Whatever it does, `contract_signatures` will match it (it uses the same filter), and I'll record the behavior in a test.
+0.14.1, with a CHANGELOG entry. StrictMode's existing compat, `TypeContracts = "0.13, 0.14"`, already admits it. Docs to update: `guide/introspection.md` (A), `guide/verification.md` (C: parametric types and the silencing rule), `guide/revise.md` (D), and `reference/api.md` (A, and B under "Extension hooks").
