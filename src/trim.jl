@@ -196,8 +196,10 @@ function _dynamic_call_issues(f, @nospecialize(sig::Type{<:Tuple}))::Vector{Stri
         stmt.head === :call || continue
         _is_trim_unsafe_callee(stmt.args[1]) && continue   # already covered above
         t = (has_types && i <= length(types)) ? types[i] : nothing
-        t === Any && push!(issues, "dynamic dispatch (result inferred as `Any`): " *
-                                    _trim_truncate(string(stmt)))
+        t === Any && push!(
+            issues, "dynamic dispatch (result inferred as `Any`): " *
+                _trim_truncate(string(stmt))
+        )
     end
     return unique!(issues)
 end
@@ -231,15 +233,19 @@ function Base.showerror(io::IO, r::TrimReport)
     end
     print(io, ": ")
     printstyled(io, r.entry; color = :cyan, bold = true)
-    println(io, " has ", length(r.findings),
-            " likely trim-unsafe site(s) (juliac --trim=safe is authoritative):")
+    println(
+        io, " has ", length(r.findings),
+        " likely trim-unsafe site(s) (juliac --trim=safe is authoritative):"
+    )
     for f in r.findings
         printstyled(io, "  ✗ "; color = :red)
         printstyled(io, f; color = :yellow)
         println(io)
     end
-    printstyled(io, "  → make these calls statically resolvable (concrete types; avoid " *
-                    "`Any`/abstract containers and runtime reflection).";
-                color = :green)
+    printstyled(
+        io, "  → make these calls statically resolvable (concrete types; avoid " *
+            "`Any`/abstract containers and runtime reflection).";
+        color = :green
+    )
     return
 end

@@ -19,7 +19,7 @@
     @test occursin("Any", msg)
 
     # Reflection callee is flagged too.
-    tr_refl() = Base.return_types(+, Tuple{Int,Int})
+    tr_refl() = Base.return_types(+, Tuple{Int, Int})
     rr = trim_report(tr_refl, Tuple{})
     @test !rr.passed
     @test any(f -> occursin("return_types", f), rr.findings)
@@ -46,8 +46,10 @@ end
      [2] pt_dyn(n::Int64, _pt_err::Ptr{Int32}, _pt_errmsg::Ptr{Ptr{UInt8}})
        @ Main /tmp/x/_pt_entry.jl:8
     """
-    f = explain_trim_failure(sample; entry_path = "/tmp/x/_pt_entry.jl",
-                             source_files = ["/tmp/badtrim.jl"])
+    f = explain_trim_failure(
+        sample; entry_path = "/tmp/x/_pt_entry.jl",
+        source_files = ["/tmp/badtrim.jl"]
+    )
     @test f isa TrimFailure
     @test f.recognized
     @test length(f.sites) == 1            # grouped by user source location
@@ -73,23 +75,25 @@ end
 
     # Two errors at two different source locations must NOT collapse.
     two_sites = """
-Verifier error #1: unresolved call from statement (Base.compilerbarrier(:type, x::Int64)::Any + 1)::Any
-Stacktrace:
- [1] foo(x::Int64)
-   @ Main /tmp/file_a.jl:10
- [2] pt_foo(x::Int64, _pt_err::Ptr{Int32}, _pt_errmsg::Ptr{Ptr{UInt8}})
-   @ Main /tmp/x/_pt_entry.jl:8
+    Verifier error #1: unresolved call from statement (Base.compilerbarrier(:type, x::Int64)::Any + 1)::Any
+    Stacktrace:
+     [1] foo(x::Int64)
+       @ Main /tmp/file_a.jl:10
+     [2] pt_foo(x::Int64, _pt_err::Ptr{Int32}, _pt_errmsg::Ptr{Ptr{UInt8}})
+       @ Main /tmp/x/_pt_entry.jl:8
 
-Verifier error #2: unresolved call from statement (Base.compilerbarrier(:type, y::Int64)::Any - 1)::Any
-Stacktrace:
- [1] bar(y::Int64)
-   @ Main /tmp/file_b.jl:20
- [2] pt_bar(y::Int64, _pt_err::Ptr{Int32}, _pt_errmsg::Ptr{Ptr{UInt8}})
-   @ Main /tmp/x/_pt_entry.jl:12
-"""
-    f = explain_trim_failure(two_sites;
-                             entry_path = "/tmp/x/_pt_entry.jl",
-                             source_files = ["/tmp/file_a.jl", "/tmp/file_b.jl"])
+    Verifier error #2: unresolved call from statement (Base.compilerbarrier(:type, y::Int64)::Any - 1)::Any
+    Stacktrace:
+     [1] bar(y::Int64)
+       @ Main /tmp/file_b.jl:20
+     [2] pt_bar(y::Int64, _pt_err::Ptr{Int32}, _pt_errmsg::Ptr{Ptr{UInt8}})
+       @ Main /tmp/x/_pt_entry.jl:12
+    """
+    f = explain_trim_failure(
+        two_sites;
+        entry_path = "/tmp/x/_pt_entry.jl",
+        source_files = ["/tmp/file_a.jl", "/tmp/file_b.jl"]
+    )
     @test f.recognized
     @test length(f.sites) == 2
     msg = sprint(showerror, f)

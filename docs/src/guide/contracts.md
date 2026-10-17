@@ -161,6 +161,68 @@ end
 
 `check_contract(Vector{Int})` then verifies that `Vector{Int}` satisfies this contract.
 
+## One method per subtype of another type
+
+Some generic functions are written once per concrete subtype rather than once for the abstract type:
+
+```julia
+struct SVGRenderer end
+render(::SVGRenderer, ::Circle) = "<circle/>"
+render(::SVGRenderer, ::Square) = "<rect/>"
+```
+
+`render(::SVGRenderer, ::AbstractShape)` does not exist, so a contract on `SVGRenderer` that requires it would fail. Instead, put the requirement on the type family that varies, `AbstractShape`, with `Self` in the second position. `Self` may appear in any argument position:
+
+```julia
+@contract AbstractShape begin
+    render(::SVGRenderer, ::Self) :: String
+end
+
+@verify_all   # checks render(::SVGRenderer, ::Circle) and render(::SVGRenderer, ::Square)
+```
+
+A subtype added later, in this package or another one, is checked when it is verified:
+
+```julia
+struct Hexagon <: AbstractShape end
+@verify Hexagon
+# InterfaceError: Type Hexagon does not satisfy interface contract.
+# Missing or incorrect methods:
+#   render(::SVGRenderer, ::Self) :: String  [required by AbstractShape]
+```
+
+When there are several renderers, list each one:
+
+```julia
+@contract AbstractShape begin
+    render(::SVGRenderer, ::Self) :: String
+    render(::PNGRenderer, ::Self) :: Vector{UInt8}
+end
+```
+
+::: warning A fallback method satisfies the contract
+
+A catch-all such as `render(::Any, ::AbstractShape) = error("not implemented")` makes `hasmethod` return `true` for every shape, and its inferred return type `Union{}` is a subtype of any declared return type. `@verify` then passes even though the per-shape methods are missing. Do not define such a fallback for a function whose per-subtype methods a contract checks.
+
+:::
+
+If both sides are open — new renderers *and* new shapes can be added by other packages — no contract can list every pair. Check the pairs that are loaded in your test suite instead:
+
+```julia
+using Test
+using InteractiveUtils: subtypes
+
+leaves(T) = isabstracttype(T) ? reduce(vcat, map(leaves, subtypes(T)); init = Type[]) : Type[T]
+
+@testset "render covers every pair" begin
+    for R in leaves(AbstractRenderer), S in leaves(AbstractShape)
+        @test hasmethod(render, Tuple{R, S})
+    end
+end
+```
+
+This checks only the subtypes defined when the test runs.
+
 ## Supertype chain
 
 Contracts are **inherited automatically** through the abstract type hierarchy. A type is checked against contracts for every ancestor that has a registered contract — no explicit composition declaration is needed:

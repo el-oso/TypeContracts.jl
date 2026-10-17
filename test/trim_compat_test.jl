@@ -73,7 +73,7 @@ end
     abstract type AbstractProcBoundary end
     function boundary_call end
     @contract AbstractProcBoundary begin
-        boundary_call(::Self) :: Int
+        boundary_call(::Self)::Int
     end
 
     # Clean structural implementation — no trim-unsafe calls.

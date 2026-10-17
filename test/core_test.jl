@@ -122,7 +122,7 @@ end
     abstract type AbstractProcessor end
     function process end
     @contract AbstractProcessor begin
-        process(::Self, ::String) :: Int
+        process(::Self, ::String)::Int
     end
 
     # A type that satisfies the contract structurally (no <: AbstractProcessor).

@@ -11,7 +11,7 @@
     abstract type DocPathREPLShape end
     function dpr_area end
     @contract DocPathREPLShape begin
-        dpr_area(::Self) :: Float64
+        dpr_area(::Self)::Float64
     end
 
     sig = Tuple{Val{:TypeContractsContract}}
@@ -37,7 +37,7 @@ end
     abstract type DocPathDocShape end
     function dpd_area end
     @contract DocPathDocShape begin
-        dpd_area(::Self) :: Float64
+        dpd_area(::Self)::Float64
     end
 
     sig = Tuple{Val{:TypeContractsContract}}
