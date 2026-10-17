@@ -88,6 +88,22 @@
         @test verified_trait(AbstractHooked, VHMixed.MixBad) === NotImplemented{AbstractHooked}()
     end
 
+    @testset "@verify_all: a type it sealed stays sealed when a later hook throws" begin
+        @test_throws "gate" @eval module VHOrder
+        using TypeContracts, ..VHOwner
+        struct AAGood <: VHOwner.AbstractHooked end
+        struct ZZBad <: VHOwner.AbstractHooked end
+        VHOwner.hk(::Union{AAGood, ZZBad}) = 1
+        TypeContracts._verify_hook(::TypeContracts._VerifyHook, ::Module, ::Type{ZZBad}, result) = error("gate")
+        @verify_all
+        end
+        # `@verify_all` visits types in `names` order; this test relies on AAGood first.
+        ns = names(VHOrder; all = true)
+        @test findfirst(==(:AAGood), ns) < findfirst(==(:ZZBad), ns)
+        @test verified_trait(AbstractHooked, VHOrder.AAGood) === Implemented{AbstractHooked}()
+        @test verified_trait(AbstractHooked, VHOrder.ZZBad) === NotImplemented{AbstractHooked}()
+    end
+
     @testset "the Revise re-check reports a hook exception as a warning" begin
         @eval module VHRevise
         using TypeContracts, ..VHOwner

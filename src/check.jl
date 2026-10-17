@@ -139,43 +139,70 @@ function _has_verified_instance(T::Type)
     return false
 end
 
-# A contract can be checked only against a concrete type. A bare parametric name
-# (`Bucket` for `struct Bucket{T}`) is a `UnionAll`: its type parameters resolve to
-# `Any`, so return types would go unchecked. Such types are skipped; with a
-# `context` (the calling form, for the message) the skip is reported unless some
-# concrete instance has already been verified.
+# Example value for a type parameter in the skip warning: a common type within the
+# parameter's bounds, else a concrete subtype of its upper bound.
+function _example_param(v::TypeVar)
+    for (C, s) in ((Int, "Int"), (Float64, "Float64"), (String, "String"), (Symbol, "Symbol"))
+        v.lb <: C <: v.ub && return s
+    end
+    v.ub isa Type && for C in _concrete_subtypes(v.ub)
+        v.lb <: C && return string(C)
+    end
+    return "<a concrete subtype of $(v.ub)>"
+end
+
+function _example_instance(T::UnionAll)
+    vars = TypeVar[]
+    U = T
+    while U isa UnionAll
+        push!(vars, U.var)
+        U = U.body
+    end
+    return "$(U.name.name){" * join(map(_example_param, vars), ", ") * "}"
+end
+
+# A contract can be fully checked only against a concrete type. A bare parametric
+# name (`Bucket` for `struct Bucket{T}`) is a `UnionAll`: its type parameters resolve
+# to `Any`, so return types declared in terms of them go unchecked. Such types are
+# not sealed. With a `context` (the calling form, for the message), the bare name is
+# still checked with `check_contract`, so a missing method throws, and the skip is
+# reported unless some instance has already been verified.
 function _is_checkable(T::Type, context::Union{String, Nothing})
     isconcretetype(T) && return true
-    if !isnothing(context) && !_has_verified_instance(T)
-        body = Base.unwrap_unionall(T)
-        name = body.name.name
-        ex = "$name{" * join(fill("Int", length(body.parameters)), ", ") * "}"
-        @warn """$context skipped $name: it is parametric, and its contract can only be
-        checked for concrete parameters.
-        To check it, add `@verify` for each instance your code uses, before `@verify_all`:
-            @verify $ex
-        Any verified instance also silences this warning. If the contract does not depend
-        on the parameter, one representative instance is enough.""" type = T contract = _first_contract(T)
+    if !isnothing(context)
+        check_contract(T)
+        if !_has_verified_instance(T)
+            name = Base.unwrap_unionall(T).name.name
+            @warn """$context skipped $name: it is parametric, and its contract can only be
+            checked for concrete parameters.
+            To check it, add `@verify` for each instance your code uses, before `@verify_all`:
+                @verify $(_example_instance(T))
+            Any verified instance also silences this warning. If the contract does not depend
+            on the parameter, one representative instance is enough.""" type = T contract = _first_contract(T)
+        end
     end
     return false
 end
 
-# Types defined in `mod` that carry a registered contract and can be checked.
-function _contract_types_in_module(mod::Module, context::Union{String, Nothing})
+# Types defined in `mod`, under any binding name, that carry a registered contract.
+function _module_contract_types(mod::Module)
     result = Type[]
     for name in names(mod; all = true)
         isdefined(mod, name) || continue
         val = getfield(mod, name)
-        val isa Type || continue
+        val isa DataType || val isa UnionAll || continue
         isabstracttype(val) && continue
         parentmodule(val) === mod || continue
-        isnothing(_first_contract(val)) && continue
         val in result && continue
-        _is_checkable(val, context) || continue
+        isnothing(_first_contract(val)) && continue
         push!(result, val)
     end
     return result
 end
+
+# The subset of `_module_contract_types(mod)` that can be checked and sealed.
+_contract_types_in_module(mod::Module, context::Union{String, Nothing}) =
+    filter(T -> _is_checkable(T, context), _module_contract_types(mod))
 
 """
     contract_signatures(mod::Module; optional = false) -> Vector{NamedTuple}
@@ -232,11 +259,12 @@ function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
 end
 
 # Non-throwing variant used by the Revise extension after live edits. Runs the
-# verify hook too; any exception, from the check or the hook, becomes a warning.
-function _check_contract_warn(mod::Module, T::Type)
+# verify hook too (unless `hook = false`, used for bare parametric names, which are
+# never sealed); any exception, from the check or the hook, becomes a warning.
+function _check_contract_warn(mod::Module, T::Type; hook::Bool = true)
     return try
         result = check_contract(T)
-        _verify_hook(_VERIFY_HOOK, mod, T, result)
+        hook && _verify_hook(_VERIFY_HOOK, mod, T, result)
         result
     catch e
         if e isa InterfaceError
@@ -249,8 +277,8 @@ end
 
 # Re-check all concrete subtypes of registered contracts in `mod`, warning on failure.
 function _revise_check_module(mod::Module)
-    for T in _contract_types_in_module(mod, nothing)
-        _check_contract_warn(mod, T)
+    for T in _module_contract_types(mod)
+        _check_contract_warn(mod, T; hook = isconcretetype(T))
     end
     return
 end

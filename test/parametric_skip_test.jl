@@ -93,7 +93,53 @@
         end
     end
 
-    @testset "the Revise re-check skips parametric types silently" begin
+    @testset "a parametric type missing a method still fails" begin
+        @test_throws "get1(::Self)" @eval module PSMissing
+        using TypeContracts, ..PSOwner
+        struct NoMethod{T} <: PSOwner.AbstractBucketP{T} end
+        @verify_all
+        end
+        @test verified_trait(AbstractBucketP, PSMissing.NoMethod) === NotImplemented{AbstractBucketP}()
+    end
+
+    @testset "an alias warns once" begin
+        logs = Test.collect_test_logs() do
+            @eval module PSAlias
+            using TypeContracts, ..PSOwner
+            struct Al{T} <: PSOwner.AbstractBucketP{T} end
+            PSOwner.get1(::Al) = 1
+            const AlAlias = Al
+            @verify_all
+            end
+        end[1]
+        @test count(l -> occursin("skipped Al", l.message), logs) == 1
+    end
+
+    @testset "the example instance respects parameter bounds" begin
+        @test_logs (:warn, r"@verify Fl\{Float64\}") match_mode = :any @eval module PSBound
+        using TypeContracts, ..PSOwner
+        struct Fl{T <: AbstractFloat} <: PSOwner.AbstractBucketP{T} end
+        PSOwner.get1(::Fl{T}) where {T} = zero(T)
+        @verify_all
+        end
+    end
+
+    @testset "a Union alias in the module is ignored" begin
+        @test_nowarn @eval module PSUnion
+        using TypeContracts, ..PSOwner
+        struct UA <: PSOwner.AbstractBucketP{Int} end
+        struct UB <: PSOwner.AbstractBucketP{Int} end
+        PSOwner.get1(::Union{UA, UB}) = 1
+        const UAB = Union{UA, UB}
+        @verify_all
+        end
+    end
+
+    @testset "the Revise re-check does not repeat the skip warning" begin
         @test_logs TypeContracts._revise_check_module(PSBad)
+    end
+
+    @testset "the Revise re-check reports a parametric type missing a method" begin
+        @test_logs (:warn, "Contract violation detected by Revise") match_mode = :any TypeContracts._revise_check_module(PSMissing)
     end
 end

@@ -69,7 +69,7 @@ If the hook throws, the exception propagates and that type is not sealed. A fail
 
 **Current behavior.** `_concrete_subtypes`, `_verify_all_in_module` and `_revise_check_module` each skip a type only when `isabstracttype` is true. A bare parametric name such as `Bucket` (from `struct Bucket{T} <: AbstractBucket{T}`) is a `UnionAll`, for which `isabstracttype` is `false`, so it gets checked as if it were concrete. A `TypeParamRef` then resolves to `Any`, so the return-type check is skipped and a wrong return type passes. The seal is also placed on `Bucket` itself, so `verified_trait(AbstractBucket, Bucket{Int})` returns `NotImplemented`.
 
-**New behavior.** All three paths use one shared function, `_contract_types_in_module(mod)`; `_concrete_subtypes` uses the same predicate. A type is checked only if `isconcretetype(T)` is true. A non-abstract type that fails that test is skipped with one `@warn`:
+**New behavior.** All three paths use one shared function, `_contract_types_in_module(mod)`; `_concrete_subtypes` uses the same predicate. A type is checked only if `isconcretetype(T)` is true. A non-abstract type that fails that test is still checked with `check_contract`, so a missing method throws `InterfaceError` exactly as before, but it is not sealed and the hook is not called; it is then reported with one `@warn`:
 
 ```
 ┌ Warning: @verify_all skipped Bucket: it is parametric, and its contract can only be
@@ -84,7 +84,7 @@ If the hook throws, the exception propagates and that type is not sealed. A fail
 
 The example instance uses `Int` for each type parameter. Its only purpose is to show the syntax, so the message says "for each instance your code uses" rather than suggesting `Int` is right. For `subtypes=true` the first line reads `@verify AbstractBucket subtypes=true skipped Bucket: …`.
 
-**Silencing the warning.** The warning is not emitted when at least one concrete instance of the type has already been verified. TypeContracts checks this by looking for a sealed `verified_trait` method whose second argument is `Type{X}`, where `X` is a concrete instance of the same type (same `Base.unwrap_unionall(T).name`). It reads the method table and keeps no new state. Because `@verify_all` goes at the end of a module, an earlier `@verify Bucket{Int}` silences it. The Revise re-check skips parametric names without warning, since `@verify_all` already warned at load time.
+**Silencing the warning.** The warning is not emitted when at least one concrete instance of the type has already been verified. TypeContracts checks this by looking for a sealed `verified_trait` method whose second argument is `Type{X}`, where `X` is a concrete instance of the same type (same `Base.unwrap_unionall(T).name`). It reads the method table and keeps no new state. Because `@verify_all` goes at the end of a module, an earlier `@verify Bucket{Int}` silences it. A seal on the bare name itself (from `@delegate` on a parametric wrapper, or an explicit `@verify Bucket`) also counts. The Revise re-check still checks parametric names for missing methods and warns on a violation, without repeating the skip warning or calling the hook. The example instance uses `Int` for each parameter when its bounds allow, otherwise another type within the bounds.
 
 ## D. Revise re-check exceptions
 
@@ -92,7 +92,7 @@ The example instance uses `Int` for each type parameter. Its only purpose is to 
 
 ## Testing
 
-New test file `test/introspection_signatures_test.jl` (A) and additions to `test/verify_all_test.jl` (B).
+Test files: `test/parametric_skip_test.jl` (C), `test/contract_signatures_test.jl` (A), `test/verify_hook_test.jl` (B), `test/revise_check_test.jl` (D).
 
 - A: a plain contract; `Self` in a non-first position; a parametric contract (`TypeParamRef` resolved in both `sig` and `return_type`); a foreign-type contract with its subtype in the test module; the `optional` flag; and a consistency check that `hasmethod(e.f, e.sig)` holds for every entry of a module that passes `@verify_all`.
 - B: the hook runs once per type, with the right `mod`/`T`/`result`, for each of the five paths; a throwing hook makes `@verify` throw, and `verified_trait` stays `NotImplemented`; the Revise path turns a hook exception into a `@warn` (tested with `@test_logs`); with no hook defined, behavior is unchanged (the existing suite covers this).

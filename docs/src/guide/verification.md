@@ -88,7 +88,7 @@ end
 
 ### Parametric types
 
-A contract can only be checked against a concrete type. For `struct Bucket{T} <: AbstractBucket{T}`, the name `Bucket` is not concrete: its parameter is unknown, so a declared return type such as `:: T` could not be checked. `@verify_all` and `@verify AbstractBucket subtypes=true` therefore skip `Bucket` and warn:
+A contract can only be checked against a concrete type. For `struct Bucket{T} <: AbstractBucket{T}`, the name `Bucket` is not concrete: its parameter is unknown, so a declared return type such as `:: T` could not be checked. `@verify_all` and `@verify AbstractBucket subtypes=true` therefore still check that `Bucket` has every contract method (a missing method throws `InterfaceError`), but do not seal it, and warn:
 
 ```
 ┌ Warning: @verify_all skipped Bucket: it is parametric, and its contract can only be

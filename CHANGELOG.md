@@ -25,8 +25,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parametric name (`Bucket` for `struct Bucket{T}`) as a concrete type. Such a type was
   checked with its type parameters resolved to `Any`, so declared return types went
   unchecked, and `verified_trait` was sealed on the `UnionAll` rather than on any instance.
-  These types are now skipped with a warning naming the fix (`@verify Bucket{Int}`); the
-  warning is not emitted once a concrete instance has been verified.
+  Such a type is still checked for missing methods (a missing method throws
+  `InterfaceError`, as before), but it is no longer sealed, and a warning names the fix
+  (`@verify Bucket{Int}`). The warning is not emitted once an instance has been verified,
+  including a parametric wrapper sealed by `@delegate`. The example instance respects the
+  parameter's bounds (`Fl{Float64}` for `Fl{T<:AbstractFloat}`).
+- A bare parametric name with a bounded parameter (`struct Fl{T<:AbstractFloat} <: A{T}`)
+  was not recognized as carrying `A`'s contract, so `@verify_all` ignored it silently.
+- `@verify_all` no longer throws a `MethodError` when the module binds a `Union` alias,
+  and a type bound under two names is checked and reported once.
 - The Revise re-check warns on every exception. Exceptions other than `InterfaceError`
   were previously discarded without a message.
 

@@ -161,8 +161,12 @@ end
 # For parameterized supertypes like AbstractBucket{Int}, return the UnionAll
 # wrapper (AbstractBucket) so it matches registry entries from
 # @contract AbstractBucket{T} begin ... end
+#
+# A supertype of a bare parametric name with a bounded parameter is itself a
+# `UnionAll` (`AbstractBucket{T} where T<:Real`), so it is unwrapped first.
 function _registry_key(S::Type)
-    S isa DataType && !isempty(S.parameters) && return S.name.wrapper
+    U = Base.unwrap_unionall(S)
+    U isa DataType && !isempty(U.parameters) && return U.name.wrapper
     return S
 end
 
