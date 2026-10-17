@@ -5,6 +5,35 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.1] - 2026-10-17
+
+### Added
+
+- `contract_signatures(mod; optional = false)` — for each concrete contract type in
+  `mod`, lists every contract method as `(f, sig, return_type, T, contract, mandatory)`,
+  with `Self` and type parameters resolved exactly as `check_contract` resolves them.
+  Dev/precompile-time only.
+- Verification hook `TypeContracts._verify_hook(::_VerifyHook, mod, T, result)`. It is
+  called once per type by `@verify`, `@verify_all`, `@verify T subtypes=true` and
+  `@delegate`, after the contract check passes and before `verified_trait` is sealed. A
+  throwing hook fails the verification. See "Extension hooks" in the API reference.
+- "One method per subtype of another type" section in the contracts guide.
+
+### Fixed
+
+- `@verify_all`, `@verify T subtypes=true` and the Revise re-check no longer treat a bare
+  parametric name (`Bucket` for `struct Bucket{T}`) as a concrete type. Such a type was
+  checked with its type parameters resolved to `Any`, so declared return types went
+  unchecked, and `verified_trait` was sealed on the `UnionAll` rather than on any instance.
+  These types are now skipped with a warning naming the fix (`@verify Bucket{Int}`); the
+  warning is not emitted once a concrete instance has been verified.
+- The Revise re-check warns on every exception. Exceptions other than `InterfaceError`
+  were previously discarded without a message.
+
+### Changed
+
+- The test suite runs on TestItemRunner instead of ReTestItems.
+
 ## [0.14.0] - 2026-07-11
 
 ### Added
