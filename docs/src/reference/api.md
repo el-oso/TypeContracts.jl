@@ -56,6 +56,7 @@ TypeContracts.NotImplemented
 ```@docs
 TypeContracts.describe(::Type{T}; io::IO) where T
 TypeContracts.describe(::Type{T}, ::Val{:all}; io::IO) where T
+contract_signatures
 ```
 
 !!! note

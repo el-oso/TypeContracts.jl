@@ -109,6 +109,36 @@ Each [`BehaviorSpec`](@ref) has:
 | `predicate` | `Function` | `x -> Bool` |
 | `optional` | `Bool` | whether this invariant is optional |
 
+## `contract_signatures(mod)` — resolved signatures for a module
+
+Lists every contract method, with `Self` and type parameters resolved, for each concrete type in `mod` that `@verify_all` would check. This is for tools that analyze the methods a contract requires:
+
+```julia
+module Shapes
+using TypeContracts
+abstract type AbstractShape end
+@contract AbstractShape begin
+    area(::Self)::Float64
+    :optional
+    name(::Self)::String
+end
+struct Circle <: AbstractShape; r::Float64 end
+area(c::Circle) = π * c.r^2
+@verify_all
+end
+
+contract_signatures(Shapes)
+# 1-element Vector:
+#  (f = area, sig = Tuple{Circle}, return_type = Float64, T = Circle,
+#   contract = AbstractShape, mandatory = true)
+
+contract_signatures(Shapes; optional = true)   # also lists name(::Circle)
+```
+
+`sig` and `return_type` are exactly what `check_contract` checks, so `hasmethod(e.f, e.sig)` and `Base.return_types(e.f, e.sig)` apply directly. Bare parametric names are left out (see [Parametric types](verification.md#Parametric-types)). Contracts registered in other modules are included when the concrete type is defined in `mod`.
+
+`contract_signatures` reads `names`, `supertypes` and the contract registry, so it is a dev/precompile-time tool and is not `juliac --trim` safe.
+
 ## `registered_contracts()` and `registered_behaviors()`
 
 Return all registered contracts and behaviors as dictionaries — useful for tooling, documentation generators, or diagnostic scripts. Intended for interactive/REPL use:

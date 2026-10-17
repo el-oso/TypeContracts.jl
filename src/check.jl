@@ -175,6 +175,48 @@ function _contract_types_in_module(mod::Module, context::Union{String, Nothing})
     return result
 end
 
+"""
+    contract_signatures(mod::Module; optional = false) -> Vector{NamedTuple}
+
+List the resolved signature of every contract method, for each concrete type in `mod`
+that `@verify_all` would check (see [`@verify_all`](@ref): bare parametric names are
+left out). Each entry is
+
+    (f, sig, return_type, T, contract, mandatory)
+
+with one entry per `(T, contract in supertypes(T), method)`. `sig` is the
+`Tuple{…}` with `Self` and type parameters resolved against `T`, and `return_type`
+is the declared return type resolved the same way (`Any` when none is declared).
+Both are exactly what [`check_contract`](@ref) checks, so `hasmethod(f, sig)` and
+`Base.return_types(f, sig)` apply directly. Optional methods are included only with
+`optional = true`.
+
+Dev/precompile-time only: reads `names`, `supertypes` and the contract registry, and
+is not `juliac --trim` safe.
+"""
+function contract_signatures(mod::Module; optional::Bool = false)
+    entries = @NamedTuple{
+        f::Function, sig::Type{<:Tuple}, return_type::Type,
+        T::Type, contract::Type, mandatory::Bool,
+    }[]
+    for T in _contract_types_in_module(mod, nothing)
+        for S in supertypes(T)
+            K = _registry_key(S)
+            for spec in _contract_specs(K)
+                spec.optional && !optional && continue
+                push!(
+                    entries, (
+                        f = spec.f, sig = _build_sig(spec.arg_types, T),
+                        return_type = _resolve_rt_spec(T, spec),
+                        T = T, contract = K, mandatory = !spec.optional,
+                    )
+                )
+            end
+        end
+    end
+    return entries
+end
+
 function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
     concrete = filter(S -> _is_checkable(S, "@verify $T subtypes=true"), _concrete_subtypes(T))
     isempty(concrete) && @warn "@verify subtypes=true: no concrete subtypes found for $T"

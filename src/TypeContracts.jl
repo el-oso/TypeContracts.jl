@@ -10,7 +10,7 @@ include("registry.jl")
 export registered_contracts, registered_behaviors
 
 include("check.jl")
-export check_contract, satisfies, implements, list_contract, list_behaviors
+export check_contract, satisfies, implements, list_contract, list_behaviors, contract_signatures
 
 include("trim.jl")
 export check_trim_compat, trim_report, TrimReport
