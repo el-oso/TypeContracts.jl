@@ -105,3 +105,19 @@
         @test_behavior_passes TCounter [TCounter(0), TCounter(5)]
     end
 end
+
+@testitem "an uncopyable type reports its invariants as failed" begin
+    using Test
+    using TypeContracts
+    abstract type AbstractHandleB end
+    @invariants AbstractHandleB begin
+        "is open" => h -> h.open
+    end
+    mutable struct HandleB <: AbstractHandleB
+        open::Bool
+    end
+    Base.deepcopy_internal(::HandleB, ::IdDict) = error("HandleB cannot be copied")
+    r = test_behavior(HandleB, [HandleB(true)])
+    @test !r.passed
+    @test occursin("HandleB cannot be copied", only(r.results).error)
+end

@@ -21,12 +21,14 @@ end
 
 # Check one mandatory spec against `T`. Returns `nothing` on success, else an
 # error line naming the requiring type `required_by` (an abstract type or interface).
-function _check_spec(T::Type, spec::MethodSpec, required_by::Type)
+# With `return_types = false` only method existence is checked, and no inference runs.
+function _check_spec(T::Type, spec::MethodSpec, required_by::Type; return_types::Bool = true)
     sig = _build_sig(spec.arg_types, T)
     if !hasmethod(spec.f, sig)
         _warn_if_more_specific(spec, T)
         return "  $(spec.description)  [required by $required_by]"
     end
+    return_types || return nothing
     expected_rt = _resolve_rt_spec(T, spec)
     expected_rt === Any && return nothing
     inferred_rt = _inferred_return_type(spec, sig)
@@ -45,7 +47,9 @@ Uses `Base.return_types` internally. Do not call from functions that run at
 binary runtime — use `@verify` / `@verify_all` at module top level instead,
 where the trimmer eliminates it before the binary is produced.
 """
-function check_contract(T::Type)
+check_contract(T::Type) = _check_contract(T, true)
+
+function _check_contract(T::Type, return_types::Bool)
     errors = String[]
     checked = Type[]
 
@@ -55,7 +59,7 @@ function check_contract(T::Type)
         push!(checked, _registry_key(S))
         for spec in specs
             spec.optional && continue
-            err = _check_spec(T, spec, S)
+            err = _check_spec(T, spec, S; return_types)
             isnothing(err) || push!(errors, err)
         end
     end
@@ -163,14 +167,15 @@ end
 
 # A contract can be fully checked only against a concrete type. A bare parametric
 # name (`Bucket` for `struct Bucket{T}`) is a `UnionAll`: its type parameters resolve
-# to `Any`, so return types declared in terms of them go unchecked. Such types are
-# not sealed. With a `context` (the calling form, for the message), the bare name is
-# still checked with `check_contract`, so a missing method throws, and the skip is
-# reported unless some instance has already been verified.
+# to `Any`, so return types cannot be checked against it. Such types are not sealed.
+# With a `context` (the calling form, for the message), the bare name is still checked
+# for method existence, so a missing method throws, and the skip is reported unless
+# some instance has already been verified. No return-type inference runs on the bare
+# name: inferring at `Any` parameters reports false mismatches.
 function _is_checkable(T::Type, context::Union{String, Nothing})
     isconcretetype(T) && return true
     if !isnothing(context)
-        check_contract(T)
+        _check_contract(T, false)
         if !_has_verified_instance(T)
             name = Base.unwrap_unionall(T).name.name
             @warn """$context skipped $name: it is parametric, and its contract can only be
@@ -192,6 +197,9 @@ function _module_contract_types(mod::Module)
         val = getfield(mod, name)
         val isa DataType || val isa UnionAll || continue
         isabstracttype(val) && continue
+        # A parametric `Union` alias (`const U{T} = Union{A{T}, B{T}}`) is a `UnionAll`
+        # whose body is not a `DataType`, and has no `parentmodule`.
+        Base.unwrap_unionall(val) isa DataType || continue
         parentmodule(val) === mod || continue
         val in result && continue
         isnothing(_first_contract(val)) && continue
@@ -247,8 +255,10 @@ function contract_signatures(mod::Module; optional::Bool = false)
 end
 
 function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
-    concrete = filter(S -> _is_checkable(S, "@verify $T subtypes=true"), _concrete_subtypes(T))
-    isempty(concrete) && @warn "@verify subtypes=true: no concrete subtypes found for $T"
+    candidates = _concrete_subtypes(T)
+    # A skipped parametric subtype reports itself, so warn only when there are none.
+    isempty(candidates) && @warn "@verify subtypes=true: no concrete subtypes found for $T"
+    concrete = filter(S -> _is_checkable(S, "@verify $T subtypes=true"), candidates)
     for S in concrete
         result = check_contract(S)
         _verify_hook(_VERIFY_HOOK, mod, S, result)
@@ -260,10 +270,11 @@ end
 
 # Non-throwing variant used by the Revise extension after live edits. Runs the
 # verify hook too (unless `hook = false`, used for bare parametric names, which are
-# never sealed); any exception, from the check or the hook, becomes a warning.
+# never sealed); any exception, from the check or the hook, becomes a warning. A bare
+# parametric name is checked for method existence only, as in `_is_checkable`.
 function _check_contract_warn(mod::Module, T::Type; hook::Bool = true)
     return try
-        result = check_contract(T)
+        result = _check_contract(T, isconcretetype(T))
         hook && _verify_hook(_VERIFY_HOOK, mod, T, result)
         result
     catch e

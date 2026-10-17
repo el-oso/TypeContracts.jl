@@ -76,7 +76,7 @@
         struct BadBox{T} <: AbstractBoxS{T} end
         get2(::BadBox) = "nope"
         end
-        @test_logs (:warn, r"@verify .*AbstractBoxS subtypes=true skipped BadBox") (:warn, r"no concrete subtypes found") match_mode = :any Core.eval(PSSubOwner, :(@verify AbstractBoxS subtypes = true))
+        @test_logs (:warn, r"@verify .*AbstractBoxS subtypes=true skipped BadBox") Core.eval(PSSubOwner, :(@verify AbstractBoxS subtypes = true))
         @test verified_trait(PSSubOwner.AbstractBoxS, PSSubOwner.BadBox) === NotImplemented{PSSubOwner.AbstractBoxS}()
     end
 
@@ -142,4 +142,59 @@
     @testset "the Revise re-check reports a parametric type missing a method" begin
         @test_logs (:warn, "Contract violation detected by Revise") match_mode = :any TypeContracts._revise_check_module(PSMissing)
     end
+end
+
+@testitem "a skipped parametric type is checked for method existence only" begin
+    using Test
+    using TypeContracts
+    # `get_int(w::Wr) = w.x` infers `Any` for the bare name `Wr`, but `Int` for
+    # `Wr{Int}`. Only the instance is checked against the declared return type.
+    @test_logs @eval module PSExist
+    using TypeContracts
+    abstract type AbstractIntBox end
+    @contract AbstractIntBox begin
+        get_int(::Self)::Int
+    end
+    struct Wr{T} <: AbstractIntBox
+        x::T
+    end
+    get_int(w::Wr) = w.x
+    @verify Wr{Int}
+    @verify_all
+    end
+    @test verified_trait(PSExist.AbstractIntBox, PSExist.Wr{Int}) === Implemented{PSExist.AbstractIntBox}()
+end
+
+@testitem "a parametric Union alias is ignored" begin
+    using Test
+    using TypeContracts
+    @eval module PSUnionAll
+    using TypeContracts
+    abstract type AbstractUA end
+    @contract AbstractUA begin
+        ua(::Self)::Int
+    end
+    struct UAa{T} <: AbstractUA end
+    struct UAb{T} <: AbstractUA end
+    ua(::Union{UAa, UAb}) = 1
+    const UAboth{T} = Union{UAa{T}, UAb{T}}
+    end
+    @test isempty(contract_signatures(PSUnionAll))
+    @test (@test_logs (:warn, r"skipped UAa") (:warn, r"skipped UAb") Core.eval(PSUnionAll, :(@verify_all))).passed
+end
+
+@testitem "subtypes=true does not warn when skipped types have verified instances" begin
+    using Test
+    using TypeContracts
+    @eval module PSSubSilent
+    using TypeContracts
+    abstract type AbstractSS end
+    @contract AbstractSS begin
+        ss(::Self)::Int
+    end
+    struct SSa{T} <: AbstractSS end
+    ss(::SSa) = 1
+    @verify SSa{Int}
+    end
+    @test_logs Core.eval(PSSubSilent, :(@verify AbstractSS subtypes = true))
 end

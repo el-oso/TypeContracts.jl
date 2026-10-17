@@ -33,6 +33,8 @@ end
 
 Pass the type and a collection of test objects. Each object is `deepcopy`'d before each predicate runs, so predicates that mutate their argument do not interfere with each other.
 
+Invariants are therefore properties of a single value. A type that owns a raw resource (a pointer, a memory mapping, a file handle, a lock) has no meaningful copy, so a predicate would inspect something other than the object under test. Such a type should make copying fail by defining `Base.deepcopy_internal(::MyType, ::IdDict)` to throw an error; `test_behavior` then reports each of its invariants as failed, with the error message. This works for any type that is not `isbits`. An `isbits` value (for example a struct whose only field is a `Ptr`) is never copied: `deepcopy` returns it unchanged, without calling `deepcopy_internal`, so the predicate receives a value identical to the original. Properties that depend on time or on a scope, such as "a borrowed buffer is valid only inside this block", belong in ordinary tests rather than in `@invariants`.
+
 ```julia
 c = Circle(0.0, 0.0, 3.0)
 r = Rectangle(0.0, 0.0, 4.0, 5.0)

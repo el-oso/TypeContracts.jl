@@ -76,7 +76,7 @@ TypeContracts._verify_hook(::TypeContracts._VerifyHook, mod::Module, T::Type, re
 - **Arguments:** `mod` is the module that called the macro, and `result` has the shape `check_contract` returns, `(type, contracts, passed)`. `T` is usually concrete. It is a bare parametric name (a `UnionAll`) when `@delegate` wraps a parametric type or `@verify` is given one explicitly.
 - **Throwing fails the verification:** the exception propagates out of the macro, and this call does not seal the type. A type that was not verified earlier therefore reads as `NotImplemented` from `verified_trait`; a seal from an earlier successful verification stays in place.
 - **Under Revise**, the re-check after each edit calls the hook too, and reports any exception as a warning (see [Revise Integration](../guide/revise.md)).
-- The fallback method does nothing. Only one package can define the generic method, and it must be written exactly as `_verify_hook(::_VerifyHook, ::Module, ::Type, ::Any)`. Methods restricted to particular types, such as `::Type{MyType}`, can coexist with it. A generic method that narrows another argument instead (for example `result::NamedTuple`) is ambiguous with them, and calls for those types throw a `MethodError`.
+- The fallback method, `_verify_hook(::Any, ::Any, ::Any, ::Any)`, does nothing. Only one package can define the generic method, and it must be written exactly as `_verify_hook(::_VerifyHook, ::Module, ::Type, ::Any)`. Methods restricted to particular types, such as `::Type{MyType}`, can coexist with it. A generic method that narrows another argument instead (for example `result::NamedTuple`) is ambiguous with them, and calls for those types throw a `MethodError`.
 
 ## Documenter integration
 

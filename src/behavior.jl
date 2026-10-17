@@ -106,6 +106,12 @@ end
 Run all behavioral invariants registered for `T`'s supertype chain
 against `deepcopy`'d test `objects`. Returns `(passed, results, mandatory_failures)`.
 
+Because each predicate receives a copy, invariants describe single values. A type
+that owns a raw resource (a pointer, memory mapping, handle or lock) should make
+`Base.deepcopy_internal` throw; `test_behavior` reports that error as a failed
+invariant. `deepcopy` returns an `isbits` value unchanged without calling
+`deepcopy_internal`.
+
 `passed` is true when all mandatory invariants hold for all objects.
 """
 function test_behavior(::Type{T}, objects) where {T}

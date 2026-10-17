@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.2] - 2026-10-17
+
+### Fixed
+
+- The `_verify_hook` fallback is now `_verify_hook(::Any, ::Any, ::Any, ::Any)`. It had the
+  same signature as the generic method the API reference tells packages to write,
+  `_verify_hook(::_VerifyHook, ::Module, ::Type, ::Any)`, so a package that followed the
+  reference replaced the fallback, which is an error during precompilation.
+- `@verify_all`, `@verify T subtypes=true` and the Revise re-check check a bare parametric
+  name only for missing methods. They no longer infer its return types with the type
+  parameters set to `Any`, which reported false mismatches (`return Any ⊄ Int64` for
+  `f(w::Wr) = w.x` against `f(::Self)::Int`, even when `Wr{Int}` satisfies the contract).
+  Return types are checked on the concrete instances given to `@verify`.
+- `@verify_all` and `contract_signatures` no longer throw a `MethodError` on a module that
+  defines a parametric `Union` alias (`const U{T} = Union{A{T}, B{T}}`).
+- `@verify T subtypes=true` warns "no concrete subtypes found" only when `T` has no
+  subtypes to check, not when every subtype is a parametric type that was skipped. Each
+  skipped type already gets its own warning, which an `@verify` of an instance silences.
+
+### Changed
+
+- The behavioral guide and the `test_behavior` docstring state that invariants describe
+  single values, because each predicate receives a `deepcopy`. A type that owns a raw
+  resource should make `Base.deepcopy_internal` throw, which `test_behavior` reports as a
+  failed invariant; lifetime and timing properties belong in ordinary tests.
+
 ## [0.14.1] - 2026-10-17
 
 ### Added

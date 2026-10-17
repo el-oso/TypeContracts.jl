@@ -114,3 +114,16 @@
         @test_logs (:warn, "Contract re-check failed") match_mode = :any TypeContracts._check_contract_warn(VHRevise, VHRevise.HookBad2)
     end
 end
+
+@testitem "verify hook fallback admits the documented generic method" begin
+    using Test
+    using TypeContracts
+    # A method with exactly the fallback's signature would replace it, which is an
+    # error during precompilation, so the documented signature must be strictly
+    # more specific than the fallback.
+    f = TypeContracts._verify_hook
+    fallback = only(m for m in methods(f) if m.module === TypeContracts)
+    documented = Tuple{typeof(f), TypeContracts._VerifyHook, Module, Type, Any}
+    @test documented <: fallback.sig
+    @test documented != fallback.sig
+end

@@ -60,11 +60,14 @@ const _DOC_SYNC_HOOK = _DocSyncHook()
 # that throws fails the verification and leaves the type unsealed. `result` has the
 # shape of `check_contract`'s return value. Another package adds a method
 # specialized on `_VerifyHook` (optionally restricted to its own types) to run
-# extra checks; the fallback does nothing.
+# extra checks; the fallback does nothing. The fallback is untyped so that a method
+# written as `(::_VerifyHook, ::Module, ::Type, ::Any)` is strictly more specific
+# and adds to it; an identical signature would replace it, which is an error during
+# precompilation.
 struct _VerifyHook end
 const _VERIFY_HOOK = _VerifyHook()
 
-_verify_hook(::_VerifyHook, ::Module, @nospecialize(T::Type), result) = nothing
+_verify_hook(::Any, ::Any, @nospecialize(T), result) = nothing
 
 # Doc attachment: no-op fallback used in scripts and juliac binaries where REPL is absent.
 # The REPL extension adds a method specialised on `_DocSyncHook`.
