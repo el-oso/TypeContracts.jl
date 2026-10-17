@@ -99,7 +99,7 @@ New test file `test/introspection_signatures_test.jl` (A) and additions to `test
 - C: a parametric type with a wrong return type is skipped with the warning by both `@verify_all` and `subtypes=true`, and is not sealed; after `@verify Bad{Int}` it is skipped without a warning; a non-parametric concrete type is still checked; `contract_signatures` omits the bare name.
 - D: `test/revise_check_test.jl` (already written): an `InterfaceError` gives the violation warning, and a `MethodError` (from `check_contract(Union{})`) gives the "re-check failed" warning.
 
-**Test runner.** On Julia 1.13.2, ReTestItems fails before running any item (`MethodError: setindex!(::ScopedValue{Bool}, ::Bool)` in `_runtests_in_current_env`), and the MCP test runner does not recognize the ReTestItems `@testsetup` fixtures. Until that is resolved, items are run by evaluating their bodies in a warm session. The full-suite gate before release has to run on a Julia version where ReTestItems works. Checking whether 1.12 is such a version is the first step of the implementation plan.
+**Test runner.** The suite runs on TestItemRunner. Shared fixtures are in `@testmodule TCFixtures`. Individual items run through the julia MCP server during iteration, and `Pkg.test()` is the gate before release.
 
 ## Release
 
