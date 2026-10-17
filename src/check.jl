@@ -130,8 +130,11 @@ function _check_contract_warn(T::Type)
     return try
         check_contract(T)
     catch e
-        e isa InterfaceError &&
+        if e isa InterfaceError
             @warn "Contract violation detected by Revise" type = T msg = e.msg
+        else
+            @warn "Contract re-check failed" type = T exception = (e, catch_backtrace())
+        end
     end
 end
 

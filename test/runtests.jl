@@ -1,3 +1,3 @@
-using ReTestItems
-using TypeContracts
-ReTestItems.runtests(pkgdir(TypeContracts))
+using TestItemRunner
+
+@run_package_tests
