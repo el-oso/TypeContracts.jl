@@ -89,4 +89,6 @@ Fix the method, and the warning disappears on the next revision cycle.
 
 - The check fires on **any** file change tracked by Revise, not only changes to the files that define the checked types. This is intentional: a method added elsewhere could satisfy or break a contract.
 - Types that appear in both `@verify T` and a `@verify_all` module are checked twice — once for each registration. This is harmless.
+- Any other exception raised during the re-check, including one thrown by a package's [verification hook](../reference/api.md#Extension-hooks), is reported as `Contract re-check failed`, with the exception and backtrace.
+- Parametric types that `@verify_all` skips (see [Parametric types](verification.md#Parametric-types)) are skipped here too, without a second warning.
 - The extension uses `Revise.add_callback` with `all=true`. The callback is registered in the extension's `__init__` and runs asynchronously via `Base.invokelatest` after each revision cycle, so it cannot block the REPL or crash the session.

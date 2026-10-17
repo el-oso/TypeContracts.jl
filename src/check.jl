@@ -221,17 +221,21 @@ function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
     concrete = filter(S -> _is_checkable(S, "@verify $T subtypes=true"), _concrete_subtypes(T))
     isempty(concrete) && @warn "@verify subtypes=true: no concrete subtypes found for $T"
     for S in concrete
-        check_contract(S)
+        result = check_contract(S)
+        _verify_hook(_VERIFY_HOOK, mod, S, result)
         _seal_verified!(mod, S)
         trim_compat && check_trim_compat(S)
     end
     return (type = T, subtypes_checked = concrete, passed = true)
 end
 
-# Non-throwing variant used by the Revise extension after live edits.
-function _check_contract_warn(T::Type)
+# Non-throwing variant used by the Revise extension after live edits. Runs the
+# verify hook too; any exception, from the check or the hook, becomes a warning.
+function _check_contract_warn(mod::Module, T::Type)
     return try
-        check_contract(T)
+        result = check_contract(T)
+        _verify_hook(_VERIFY_HOOK, mod, T, result)
+        result
     catch e
         if e isa InterfaceError
             @warn "Contract violation detected by Revise" type = T msg = e.msg
@@ -244,7 +248,7 @@ end
 # Re-check all concrete subtypes of registered contracts in `mod`, warning on failure.
 function _revise_check_module(mod::Module)
     for T in _contract_types_in_module(mod, nothing)
-        _check_contract_warn(T)
+        _check_contract_warn(mod, T)
     end
     return
 end

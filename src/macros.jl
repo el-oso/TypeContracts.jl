@@ -196,7 +196,8 @@ macro verify(T, kwargs...)
     if for_contract !== nothing
         return quote
             let _verify_result = TypeContracts.check_contract($(esc(T)), $(esc(for_contract)))
-                push!(TypeContracts._revise_tracked_types, $(esc(T)))
+                push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T))))
+                TypeContracts._verify_hook(TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(T)), _verify_result)
                 TypeContracts._seal_verified!(@__MODULE__, $(esc(T)), $(esc(for_contract)))
                 $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)), $(esc(for_contract)))
                 _verify_result
@@ -205,7 +206,8 @@ macro verify(T, kwargs...)
     end
     return quote
         let _verify_result = TypeContracts.check_contract($(esc(T)))
-            push!(TypeContracts._revise_tracked_types, $(esc(T)))
+            push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T))))
+            TypeContracts._verify_hook(TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(T)), _verify_result)
             TypeContracts._seal_verified!(@__MODULE__, $(esc(T)))
             $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)))
             _verify_result
@@ -265,7 +267,8 @@ end
 function _verify_all_in_module(mod::Module; trim_compat::Bool = false)
     checked = _contract_types_in_module(mod, "@verify_all")
     for T in checked
-        check_contract(T)
+        result = check_contract(T)
+        _verify_hook(_VERIFY_HOOK, mod, T, result)
         _seal_verified!(mod, T)
         trim_compat && check_trim_compat(T)
     end
@@ -534,6 +537,14 @@ macro delegate(T_expr, field_expr, I_expr)
                 )
             end
         end
+    )
+    push!(
+        body, :(
+            TypeContracts._verify_hook(
+                TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(wrapper_sym)),
+                (type = $(esc(wrapper_sym)), contracts = Type[TypeContracts._registry_key($I_val)], passed = true),
+            )
+        )
     )
     push!(body, :(TypeContracts._seal_verified!(@__MODULE__, $(esc(wrapper_sym)), $I_val)))
     push!(body, :nothing)

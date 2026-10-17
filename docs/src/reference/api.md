@@ -64,6 +64,20 @@ contract_signatures
     chain. `describe(T, Val(:all))` on an **abstract** type additionally walks
     upward through its own supertypes.
 
+## Extension hooks
+
+Another package can run its own checks whenever TypeContracts verifies a type, by adding a method to the verification hook:
+
+```julia
+TypeContracts._verify_hook(::TypeContracts._VerifyHook, mod::Module, T::Type, result)
+```
+
+- **When it is called:** once per verified type, by `@verify T`, `@verify T for_contract=I`, `@verify T subtypes=true` (for each subtype), `@verify_all` (for each type) and `@delegate`. The order is: contract check passes → `_verify_hook` → `verified_trait` sealed → `check_trim_compat` (if requested).
+- **Arguments:** `mod` is the module that called the macro, and `result` has the shape `check_contract` returns, `(type, contracts, passed)`.
+- **Throwing fails the verification:** the exception propagates out of the macro, and the type is not sealed, so `verified_trait` reports `NotImplemented`.
+- **Under Revise**, the re-check after each edit calls the hook too, and reports any exception as a warning (see [Revise Integration](../guide/revise.md)).
+- The fallback method does nothing. Only one package can define the generic method `_verify_hook(::_VerifyHook, ::Module, ::Type, ::Any)`; methods restricted to particular types, such as `::Type{MyType}`, can coexist with it.
+
 ## Documenter integration
 
 ```@docs

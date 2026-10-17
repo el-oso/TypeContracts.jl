@@ -7,8 +7,8 @@
     end
     struct ReviseBadShape <: ReviseShape end
 
-    @test_logs (:warn, "Contract violation detected by Revise") match_mode = :any TypeContracts._check_contract_warn(ReviseBadShape)
+    @test_logs (:warn, "Contract violation detected by Revise") match_mode = :any TypeContracts._check_contract_warn(@__MODULE__, ReviseBadShape)
 
     # `check_contract(Union{})` throws a MethodError rather than an InterfaceError.
-    @test_logs (:warn, "Contract re-check failed") match_mode = :any TypeContracts._check_contract_warn(Union{})
+    @test_logs (:warn, "Contract re-check failed") match_mode = :any TypeContracts._check_contract_warn(@__MODULE__, Union{})
 end

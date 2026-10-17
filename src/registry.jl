@@ -10,8 +10,9 @@
 # This is what makes multi-package coexistence safe under Julia's precompilation
 # model — there is no shared dict to be reset out from under a dependent package.
 
-# Types and modules registered for live re-checking by the Revise extension.
-const _revise_tracked_types = Set{Type}()
+# Types (with the module that verified them) and modules registered for live
+# re-checking by the Revise extension.
+const _revise_tracked_types = Set{Tuple{Module, Type}}()
 const _revise_tracked_modules = Set{Module}()
 
 """
@@ -51,6 +52,19 @@ _contract_desc(::Type) = ""
 # rejects.
 struct _DocSyncHook end
 const _DOC_SYNC_HOOK = _DocSyncHook()
+
+# Verification hook, same dispatch pattern. Every path that verifies a type —
+# `@verify`, `@verify T for_contract=I`, `@verify T subtypes=true`, `@verify_all`,
+# `@delegate` — calls `_verify_hook(_VERIFY_HOOK, mod, T, result)` once per type,
+# after the contract check passes and before `verified_trait` is sealed, so a hook
+# that throws fails the verification and leaves the type unsealed. `result` has the
+# shape of `check_contract`'s return value. Another package adds a method
+# specialized on `_VerifyHook` (optionally restricted to its own types) to run
+# extra checks; the fallback does nothing.
+struct _VerifyHook end
+const _VERIFY_HOOK = _VerifyHook()
+
+_verify_hook(::_VerifyHook, ::Module, @nospecialize(T::Type), result) = nothing
 
 # Doc attachment: no-op fallback used in scripts and juliac binaries where REPL is absent.
 # The REPL extension adds a method specialised on `_DocSyncHook`.
