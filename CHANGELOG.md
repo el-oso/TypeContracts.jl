@@ -5,6 +5,16 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.3] - 2026-10-18
+
+### Fixed
+
+- `@verify`, `@verify_all` and `@delegate` no longer throw
+  ``UndefVarError: `TypeContracts` not defined`` when the calling module has not itself
+  imported `TypeContracts`, for example when it reaches the macros through another
+  package. Sealing `verified_trait` referred to `TypeContracts` by name in the caller's
+  module.
+
 ## [0.14.2] - 2026-10-17
 
 ### Fixed

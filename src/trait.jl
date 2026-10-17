@@ -65,12 +65,14 @@ verified_trait(::Type{I}, ::Type{T}) where {I, T} = NotImplemented{I}()
 # `check_contract(T)` succeeds — an exception before this point means nothing gets
 # sealed. `Core.eval` in `mod` at module-load/precompile time makes this an ordinary
 # method definition (survives precompilation, no mutable registry), exactly like the
-# `interface_trait` methods `@contract` emits.
+# `interface_trait` methods `@contract` emits. The module object is spliced in, not the
+# name `TypeContracts`, because `mod` need not have that name in scope (it may reach
+# the macros through another package).
 function _seal_verified!(mod::Module, T::Type)
     for S in supertypes(T)
         K = _registry_key(S)
         isempty(_contract_specs(K)) && continue
-        Core.eval(mod, :(TypeContracts.verified_trait(::Type{$K}, ::Type{$T}) = TypeContracts.Implemented{$K}()))
+        Core.eval(mod, :($TypeContracts.verified_trait(::Type{$K}, ::Type{$T}) = $Implemented{$K}()))
     end
     return nothing
 end
@@ -78,7 +80,7 @@ end
 # Single-interface form, used by `@verify T for_contract=I` and `@delegate`.
 function _seal_verified!(mod::Module, T::Type, I::Type)
     K = _registry_key(I)
-    Core.eval(mod, :(TypeContracts.verified_trait(::Type{$K}, ::Type{$T}) = TypeContracts.Implemented{$K}()))
+    Core.eval(mod, :($TypeContracts.verified_trait(::Type{$K}, ::Type{$T}) = $Implemented{$K}()))
     return nothing
 end
 

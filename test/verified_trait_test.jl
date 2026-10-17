@@ -102,3 +102,30 @@
         @test (@allocated f(TCircle(1.0))) == 0
     end
 end
+
+@testitem "sealing works from a module that has not imported TypeContracts" begin
+    using Test
+    using TypeContracts
+
+    @eval module SealOwner
+    using TypeContracts
+    abstract type AbstractSealed end
+    @contract AbstractSealed begin
+        sealed_val(::Self)::Int
+    end
+    end
+
+    # Reaches the macros only through `SealOwner`, so it has no `TypeContracts` binding.
+    @eval module SealUser
+    using ..SealOwner
+    struct A <: SealOwner.AbstractSealed end
+    struct B <: SealOwner.AbstractSealed end
+    SealOwner.sealed_val(::Union{A, B}) = 1
+    SealOwner.TypeContracts.@verify A
+    SealOwner.TypeContracts.@verify B for_contract = SealOwner.AbstractSealed
+    end
+
+    @test !isdefined(SealUser, :TypeContracts)
+    @test verified_trait(SealOwner.AbstractSealed, SealUser.A) isa Implemented
+    @test verified_trait(SealOwner.AbstractSealed, SealUser.B) isa Implemented
+end
