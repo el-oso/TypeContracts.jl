@@ -22,14 +22,17 @@ end
 # Check one mandatory spec against `T`. Returns `nothing` on success, else an
 # error line naming the requiring type `required_by` (an abstract type or interface).
 # With `return_types = false` only method existence is checked, and no inference runs.
-function _check_spec(T::Type, spec::MethodSpec, required_by::Type; return_types::Bool = true)
-    sig = _build_sig(spec.arg_types, T)
+# Type parameters are resolved from `params` (see `_substitute`).
+function _check_spec(
+        T::Type, spec::MethodSpec, required_by::Type; return_types::Bool = true, params = T
+    )
+    sig = _build_sig(spec.arg_types, T, params)
     if !hasmethod(spec.f, sig)
         _warn_if_more_specific(spec, T)
         return "  $(spec.description)  [required by $required_by]"
     end
     return_types || return nothing
-    expected_rt = _resolve_rt_spec(T, spec)
+    expected_rt = _resolve_rt_spec(T, spec, params)
     expected_rt === Any && return nothing
     inferred_rt = _inferred_return_type(spec, sig)
     inferred_rt <: expected_rt && return nothing
@@ -84,15 +87,25 @@ Structural variant: verify that `T` satisfies the mandatory contract for `I` wit
 requiring `T <: I`. Useful for structural (Holy Trait) protocols where the implementing
 type does not and cannot subtype the interface type.
 
+For a parametric interface, pass its parameters (`check_contract(T, I{Int})`): when `T`
+does not subtype `I`, they are taken from `I`, and a bare `I` resolves them to `Any`.
+
 Throws `InterfaceError` on failure. Uses `Base.return_types` — precompile-time only.
 """
-function check_contract(T::Type, I::Type)
+check_contract(T::Type, I::Type) = _check_contract(T, I, true)
+
+# Type parameters come from `T` when it subtypes `I` (bare or with the parameters asked
+# for), else from `I` itself.
+_param_source(T::Type, I::Type) = T <: I ? T : I
+
+function _check_contract(T::Type, I::Type, return_types::Bool)
     specs = _contract_specs(_registry_key(I))
     isempty(specs) && throw(ArgumentError("no contract registered for $I"))
     errors = String[]
+    params = _param_source(T, I)
     for spec in specs
         spec.optional && continue
-        err = _check_spec(T, spec, I)
+        err = _check_spec(T, spec, I; return_types, params)
         isnothing(err) || push!(errors, err)
     end
     if !isempty(errors)
@@ -129,7 +142,7 @@ end
 
 # True when `T`'s type constructor has a sealed `verified_trait(::Type{K}, ::Type{X})`
 # method, for a concrete instance `X` or for the bare name itself (as sealed by
-# `@delegate` on a parametric wrapper or an explicit `@verify` of the bare name).
+# `@delegate` on a parametric wrapper).
 function _has_verified_instance(T::Type)
     name = Base.unwrap_unionall(T).name
     for m in methods(verified_trait)
@@ -254,6 +267,11 @@ function contract_signatures(mod::Module; optional::Bool = false)
     return entries
 end
 
+# The check run by `@verify T` (`I === nothing`) and `@verify T for_contract=I`. A bare
+# parametric name is checked for method existence only, as in `_is_checkable`.
+_verify_check(T::Type, ::Nothing) = _check_contract(T, !(T isa UnionAll))
+_verify_check(T::Type, I::Type) = _check_contract(T, I, !(T isa UnionAll))
+
 function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
     candidates = _concrete_subtypes(T)
     # A skipped parametric subtype reports itself, so warn only when there are none.
@@ -272,9 +290,10 @@ end
 # verify hook too (unless `hook = false`, used for bare parametric names, which are
 # never sealed); any exception, from the check or the hook, becomes a warning. A bare
 # parametric name is checked for method existence only, as in `_is_checkable`.
-function _check_contract_warn(mod::Module, T::Type; hook::Bool = true)
+function _check_contract_warn(mod::Module, T::Type, I = nothing; hook::Bool = true)
     return try
-        result = _check_contract(T, isconcretetype(T))
+        result = isnothing(I) ? _check_contract(T, isconcretetype(T)) :
+            _check_contract(T, I, isconcretetype(T))
         hook && _verify_hook(_VERIFY_HOOK, mod, T, result)
         result
     catch e
@@ -308,13 +327,14 @@ function satisfies(T::Type, S::Type)
 
     missing_methods = String[]
     missing_optional = String[]
+    params = _param_source(T, S)
     for spec in specs
-        sig = _build_sig(spec.arg_types, T)
+        sig = _build_sig(spec.arg_types, T, params)
         if !hasmethod(spec.f, sig)
             spec.optional || _warn_if_more_specific(spec, T)
             push!(spec.optional ? missing_optional : missing_methods, spec.description)
         elseif !spec.optional
-            expected_rt = _resolve_rt_spec(T, spec)
+            expected_rt = _resolve_rt_spec(T, spec, params)
             if expected_rt !== Any
                 inferred_rt = _inferred_return_type(spec, sig)
                 if !(inferred_rt <: expected_rt)
@@ -333,10 +353,11 @@ end
 """
     list_contract(T::Type) -> Vector{MethodSpec}
 
-Return method specs registered directly for type `T`.
+Return method specs registered directly for type `T`. A parameterized type such as
+`AbstractBag{Int}` gives the contract registered for `AbstractBag`.
 """
 function list_contract(T::Type)::Vector{MethodSpec}
-    return _contract_specs(T)
+    return _contract_specs(_registry_key(T))
 end
 
 """

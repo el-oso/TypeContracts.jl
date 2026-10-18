@@ -60,14 +60,14 @@ Calling `?AbstractShape` in the REPL now shows both the type's docstring and the
 Contracts on types you do not own work the same way. The contract section is appended below the existing documentation without modifying `Base`:
 
 ```julia
-@contract AbstractVector{T} begin
-    Base.getindex(::Self, ::Int) :: T
-    Base.push!(::Self, ::T)
+@contract AbstractDict{K,V} begin
+    Base.getindex(::Self, ::K) :: V
+    Base.haskey(::Self, ::K) :: Bool
     Base.length(::Self) :: Int
 end
 ```
 
-`?AbstractVector` in the REPL now shows Base's own documentation followed by the TypeContracts section.
+`?AbstractDict` in the REPL now shows Base's own documentation followed by the TypeContracts section.
 
 ## juliac / static compilation
 

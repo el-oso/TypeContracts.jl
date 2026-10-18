@@ -126,6 +126,10 @@ abstract type AbstractGrid{T,N} end
 end
 ```
 
+`Self` and the type parameters may appear inside other types, in arguments and return types alike: `::Type{Self}`, `::Vector{T}`, `:: Vector{Pair{T,Self}}`. Variable arguments are written `::Vararg{T}`.
+
+A structural check (`@verify T for_contract = I`, `check_contract(T, I)`, `satisfies(T, I)`) of a type that does not subtype a parametric interface takes the parameters from the interface, so pass them: `@verify Impl for_contract = AbstractContainer{Int}`. With the bare name they resolve to `Any`.
+
 ## Interface description and per-method docs
 
 An optional string argument adds an interface-level description. Per-method prose is written as `sig => "description"` using the `=>` operator:
@@ -151,15 +155,18 @@ Both the description and per-method prose are:
 using TypeContracts
 
 # Add a contract to a Base abstract type.
-@contract AbstractVector{T} begin
-    Base.getindex(::Self, ::Int) :: T
-    Base.setindex!(::Self, ::T, ::Int)
+@contract AbstractDict{K,V} begin
+    Base.getindex(::Self, ::K) :: V
+    Base.haskey(::Self, ::K) :: Bool
     Base.length(::Self) :: Int
-    Base.push!(::Self, ::T)
 end
 ```
 
-`check_contract(Vector{Int})` then verifies that `Vector{Int}` satisfies this contract.
+`check_contract(Dict{String,Int})` then verifies that `Dict{String,Int}` satisfies this contract.
+
+The type may also be written qualified, such as `@contract Base.AbstractDict{K,V}` or `@contract OtherPackage.AbstractThing`. It must be the type itself, not an alias: `AbstractVector{T}` is `AbstractArray{T,1}`, and subtypes are checked against `AbstractArray`, so `@contract AbstractVector{T}` is an error.
+
+A type has one contract and one set of invariants. Registering a second one for the same type is an error during precompilation, whichever package it comes from; interactively, the new registration replaces the old one with a warning.
 
 ## One method per subtype of another type
 

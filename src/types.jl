@@ -107,7 +107,8 @@ A single method requirement within an interface contract.
 
 # Fields
 - `f::Function` — the function object
-- `arg_types::Vector{Any}` — argument types (`Self`, `TypeParamRef`, or concrete `Type`)
+- `arg_types::Vector{Any}` — argument types (`Self`, `TypeParamRef`, or a type, which may
+  contain `Self` and placeholders for type parameters, as in `Vector{T}`)
 - `return_type::Type` — annotated return type for display (`Any` if unspecified or parametric)
 - `return_type_spec::Union{Type,TypeParamRef}` — used for actual return type checking
 - `description::String` — human-readable signature for error messages

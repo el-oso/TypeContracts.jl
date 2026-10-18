@@ -60,8 +60,9 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
     parsed = _parse_block(block)
 
     # Auto-generate abstract type stub if not already defined in the calling module.
-    type_stub = isdefined(mod, abstract_sym) ? nothing :
-        :(abstract type $(esc(T_expr)) end)
+    # A qualified name refers to a type defined elsewhere, so it gets no stub.
+    type_stub = abstract_sym isa Symbol && !isdefined(mod, abstract_sym) ?
+        :(abstract type $(esc(T_expr)) end) : nothing
 
     # Auto-generate function stubs for unqualified names not yet defined.
     # Qualified names (Base.length, etc.) are skipped — they already exist.
@@ -124,9 +125,10 @@ function _build_contract_expr(mod::Module, T_expr, desc::String, block)
         $(func_stubs...)
         isabstracttype($(esc(abstract_sym))) ||
             error("@contract requires an abstract type, got $($(esc(abstract_sym)))")
-        isempty(TypeContracts._contract_specs($(esc(abstract_sym)))) ||
-            @warn "@contract: overwriting existing contract for $($(esc(abstract_sym))) — " *
-            "check for a conflicting @contract registration in another package"
+        TypeContracts._check_header($(esc(abstract_sym)), $(length(type_vars)))
+        TypeContracts._check_reregistration(
+            TypeContracts._contract_specs, $(esc(abstract_sym)), "@contract", "contract"
+        )
         function TypeContracts._contract_specs(::Type{$(esc(abstract_sym))})
             return TypeContracts.MethodSpec[$(spec_exprs...)]
         end
@@ -173,6 +175,13 @@ protocols where user types satisfy a contract's method signatures but do not and
 cannot subtype the interface type. Combining with `trim_compat=true` also checks
 that `T`'s implementations of `I`'s methods are juliac `--trim` compatible.
 
+Option values may be literals or names in the calling module, except `subtypes`,
+which must be the literal `true` or `false`. Any other option name is an error.
+
+A bare parametric name (`@verify Bucket` for `struct Bucket{T}`) is checked for
+method existence only, since its type parameters are unknown; return types are
+checked by `@verify Bucket{Int}`.
+
 Must be placed after all type and method definitions.
 """
 macro verify(T, kwargs...)
@@ -182,33 +191,39 @@ macro verify(T, kwargs...)
     for kw in kwargs
         if kw isa Expr && kw.head === :(=)
             if kw.args[1] === :trim_compat
-                trim_compat = kw.args[2]
+                trim_compat = esc(kw.args[2])
             elseif kw.args[1] === :subtypes
                 check_subtypes = kw.args[2]
+                check_subtypes isa Bool ||
+                    error("@verify: subtypes must be true or false, got $check_subtypes")
             elseif kw.args[1] === :for_contract
                 for_contract = kw.args[2]
+            else
+                _unknown_option("@verify", kw)
             end
+        else
+            _unknown_option("@verify", kw)
         end
     end
     if check_subtypes
         return :(TypeContracts._verify_subtypes($(esc(T)), @__MODULE__; trim_compat = $(trim_compat)))
     end
-    if for_contract !== nothing
+    if !isnothing(for_contract)
         return quote
-            let _verify_result = TypeContracts.check_contract($(esc(T)), $(esc(for_contract)))
-                push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T))))
+            let _verify_result = TypeContracts._verify_check($(esc(T)), $(esc(for_contract)))
+                push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T)), $(esc(for_contract))))
                 TypeContracts._verify_hook(TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(T)), _verify_result)
-                TypeContracts._seal_verified!(@__MODULE__, $(esc(T)), $(esc(for_contract)))
+                TypeContracts._seal_verified_checked!(@__MODULE__, $(esc(T)), $(esc(for_contract)))
                 $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)), $(esc(for_contract)))
                 _verify_result
             end
         end
     end
     return quote
-        let _verify_result = TypeContracts.check_contract($(esc(T)))
-            push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T))))
+        let _verify_result = TypeContracts._verify_check($(esc(T)), nothing)
+            push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T)), nothing))
             TypeContracts._verify_hook(TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(T)), _verify_result)
-            TypeContracts._seal_verified!(@__MODULE__, $(esc(T)))
+            TypeContracts._seal_verified_checked!(@__MODULE__, $(esc(T)), nothing)
             $(trim_compat) && TypeContracts.check_trim_compat($(esc(T)))
             _verify_result
         end
@@ -249,11 +264,36 @@ area(s::Square) = ...
 end
 ```
 """
+# Contracts are looked up by type name (`_registry_key`), so one registered on an alias
+# (`AbstractVector`, which is `AbstractArray{T,1} where T`) would never be found. A
+# header parameter past the type's own would resolve to `Any` at every check.
+function _check_header(@nospecialize(T), n::Int)
+    K = _registry_key(T)
+    K === T || error(
+        "@contract: $T is an alias of $K; register the contract on $K, " *
+            "the type that subtypes are checked against"
+    )
+    available = length(Base.unwrap_unionall(T).parameters)
+    n <= available || error(
+        "@contract: the header names $n type parameters, but $T has $available"
+    )
+    return nothing
+end
+
+function _unknown_option(macro_name::String, kw)
+    kw isa Expr && kw.head === :(=) ||
+        error("$macro_name: options are written `name = value`, got `$kw`")
+    valid = macro_name == "@verify" ? "trim_compat, subtypes, for_contract" : "trim_compat"
+    return error("$macro_name: unknown option `$(kw.args[1])`; valid options are $valid")
+end
+
 macro verify_all(kwargs...)
     trim_compat = false
     for kw in kwargs
         if kw isa Expr && kw.head === :(=) && kw.args[1] === :trim_compat
-            trim_compat = kw.args[2]
+            trim_compat = esc(kw.args[2])
+        else
+            _unknown_option("@verify_all", kw)
         end
     end
     return quote
@@ -285,6 +325,10 @@ end
 Register behavioral invariants for a type. These are tested at test time
 via `test_behavior`, not at compile time. The `:optional` separator works
 the same as in `@contract`.
+
+Invariants registered for a parameterized type, such as `AbstractBag{Int}`, apply
+to the subtypes of that type only; those registered for `AbstractBag` apply to all
+of its subtypes.
 """
 macro invariants(T, block)
     block isa Expr && block.head == :block ||
@@ -314,9 +358,9 @@ macro invariants(T, block)
     end
 
     return quote
-        isempty(TypeContracts._behavior_specs($(esc(T)))) ||
-            @warn "@invariants: overwriting existing invariants for $($(esc(T))) — " *
-            "check for a conflicting @invariants registration in another package"
+        TypeContracts._check_reregistration(
+            TypeContracts._behavior_specs, $(esc(T)), "@invariants", "invariants"
+        )
         function TypeContracts._behavior_specs(::Type{$(esc(T))})
             return TypeContracts.BehaviorSpec[$(spec_exprs...)]
         end
@@ -327,13 +371,16 @@ end
 
 # ── @contract parsing internals ───────────────────────────────────────
 
+# A type name is a symbol or a qualified name (`Base.AbstractArray`).
+_is_type_name(x) = x isa Symbol || (x isa Expr && x.head === :. && length(x.args) == 2)
+
 function _parse_contract_header(expr)
-    if expr isa Symbol
+    if _is_type_name(expr)
         return expr, Dict{Symbol, Int}()
     elseif expr isa Expr && expr.head == :curly
         abstract_sym = expr.args[1]
-        abstract_sym isa Symbol ||
-            error("@contract: abstract type name must be a symbol, got $abstract_sym")
+        _is_type_name(abstract_sym) ||
+            error("@contract: abstract type name must be a name, got $abstract_sym")
         type_vars = Dict{Symbol, Int}()
         for (i, tv) in enumerate(expr.args[2:end])
             tv isa Symbol ||
@@ -346,30 +393,42 @@ function _parse_contract_header(expr)
     end
 end
 
-function _resolve_arg_expr(t, type_vars::Dict{Symbol, Int}, abstract_sym::Symbol)
-    t isa Symbol && t === :Self && return :(TypeContracts.Self)
+# True when `t` mentions `Self` or a contract type parameter.
+_mentions_placeholder(t, type_vars) =
+    t === :Self || (t isa Symbol && haskey(type_vars, t)) ||
+    (t isa Expr && t.head === :curly && any(a -> _mentions_placeholder(a, type_vars), t.args[2:end])) ||
+    (_is_bound(t) && _mentions_placeholder(t.args[1], type_vars))
+
+# A bound in a type parameter: `<:X` or `>:X`, as in `Type{<:Self}`.
+_is_bound(t) = t isa Expr && t.head in (:<:, :>:) && length(t.args) == 1
+
+# An argument or return type with `Self` and the contract's type parameters replaced:
+# a bare `Self` or `T` by `Self` or a `TypeParamRef`, and one nested in `{…}`, such as
+# `Vector{T}` or `Type{Self}`, by `Self` or a `_NestedParam`. Other names resolve in the
+# calling module.
+function _resolve_arg_expr(t, type_vars::Dict{Symbol, Int}, abstract_sym; nested::Bool = false)
+    t === :Self && return :(TypeContracts.Self)
     if t isa Symbol && haskey(type_vars, t)
         idx = type_vars[t]
-        return :(TypeContracts.TypeParamRef($(esc(abstract_sym)), $idx))
+        return nested ? :(TypeContracts._NestedParam{$(esc(abstract_sym)), $idx}) :
+            :(TypeContracts.TypeParamRef($(esc(abstract_sym)), $idx))
     end
+    if t isa Expr && t.head === :curly && _mentions_placeholder(t, type_vars)
+        args = Any[_resolve_arg_expr(a, type_vars, abstract_sym; nested = true) for a in t.args[2:end]]
+        return Expr(:curly, esc(t.args[1]), args...)
+    end
+    nested && _is_bound(t) && _mentions_placeholder(t, type_vars) &&
+        return Expr(t.head, _resolve_arg_expr(t.args[1], type_vars, abstract_sym; nested))
     return esc(t)
 end
 
-function _resolve_rtype_exprs(rtype, type_vars::Dict{Symbol, Int}, abstract_sym::Symbol)
-    if rtype === :Any
-        return :(Any), :(Any)
-    elseif rtype === :Self
-        # Concrete type not known until check time — mirrors the TypeParamRef
-        # branch below. Fully-qualified so it resolves regardless of whether
-        # the registering module has `Self` in scope (unlike a bare `esc`).
-        return :(Any), :(TypeContracts.Self)
-    elseif rtype isa Symbol && haskey(type_vars, rtype)
-        idx = type_vars[rtype]
-        return :(Any), :(TypeContracts.TypeParamRef($(esc(abstract_sym)), $idx))
-    else
-        e = esc(rtype)
-        return e, e
-    end
+function _resolve_rtype_exprs(rtype, type_vars::Dict{Symbol, Int}, abstract_sym)
+    rtype === :Any && return :(Any), :(Any)
+    # `Self` and type parameters are resolved at check time, so the display type is `Any`.
+    _mentions_placeholder(rtype, type_vars) &&
+        return :(Any), _resolve_arg_expr(rtype, type_vars, abstract_sym)
+    e = esc(rtype)
+    return e, e
 end
 
 function _parse_block(block::Expr)
@@ -437,17 +496,22 @@ function _wrapper_base_sym(T_expr)
     error("@delegate: expected TypeName or TypeName{T,...}, got: $T_expr")
 end
 
-function _fn_name_expr(f::Function)
-    fmod = parentmodule(f)
-    fname = nameof(f)
-    parts = Base.fullname(fmod)
-    length(parts) == 1 && parts[1] === :Main && return fname
-    expr::Any = parts[1]::Symbol
-    for part in parts[2:end]
-        expr = Expr(:., expr, QuoteNode(part))
-    end
-    return Expr(:., expr, QuoteNode(fname))
+# The function as `Module.name`, with the module object spliced in, so the caller need
+# not have the module's name in scope.
+_fn_name_expr(f::Function) = Expr(:., parentmodule(f), QuoteNode(nameof(f)))
+
+# True when `pred` holds for `t` or for any type nested in it.
+function _mentions(pred, @nospecialize(t))
+    pred(t) && return true
+    t isa Core.TypeofVararg && return _mentions(pred, t.T)
+    t isa Union && return _mentions(pred, t.a) || _mentions(pred, t.b)
+    t isa DataType && return any(p -> _mentions(pred, p), t.parameters)
+    t isa UnionAll && return _mentions(pred, t.var) || _mentions(pred, t.body)
+    t isa TypeVar && return _mentions(pred, t.lb) || _mentions(pred, t.ub)
+    return false
 end
+
+_is_nested_param(t) = t isa DataType && t.name === _NestedParam.body.body.name
 
 function _forwarder_expr(wrapper_sym::Symbol, field::Symbol, spec::MethodSpec)
     n = length(spec.arg_types)
@@ -458,15 +522,24 @@ function _forwarder_expr(wrapper_sym::Symbol, field::Symbol, spec::MethodSpec)
         if at === Self
             push!(sig_args, :($name::$(esc(wrapper_sym))))
             push!(fwd_args, :(getfield($name, $(QuoteNode(field)))))
-        elseif at isa TypeParamRef
-            push!(sig_args, name)   # Any dispatch — safe, gets passed through
-            push!(fwd_args, name)
+            continue
+        end
+        _mentions(==(Self), at) && error(
+            "@delegate: cannot forward an argument of type " *
+                "$(replace(string(at), "TypeContracts." => "")) in `$(spec.description)`: " *
+                "only a bare `Self` argument is replaced by the field"
+        )
+        # Arguments typed by a contract type parameter are forwarded untyped.
+        untyped = at isa TypeParamRef || _mentions(_is_nested_param, at)
+        if at isa Core.TypeofVararg
+            push!(sig_args, untyped ? :($name...) : :($name::$at))
+            push!(fwd_args, :($name...))
         else
-            push!(sig_args, :($name::$at))
+            push!(sig_args, untyped ? name : :($name::$at))
             push!(fwd_args, name)
         end
     end
-    fn_expr = esc(_fn_name_expr(spec.f))
+    fn_expr = _fn_name_expr(spec.f)
     return :($fn_expr($(sig_args...)) = $fn_expr($(fwd_args...)))
 end
 
@@ -503,7 +576,11 @@ satisfies(LoggedArray{Int}, AbstractArray)   # (satisfied = true, ...)
 # Limitations
 - Only methods in `@contract InterfaceType` are forwarded. Add to the contract first.
 - `@contract` (or `using` the package that registers it) must precede `@delegate`.
-- Arguments typed as interface type parameters are forwarded untyped (`Any` dispatch).
+- Arguments typed as interface type parameters, alone or inside another type
+  (`::T`, `::Vector{T}`), are forwarded untyped (`Any` dispatch).
+- Only a bare `::Self` argument is replaced by the field. A method with `Self` inside
+  another argument type, such as `::Type{Self}`, cannot be forwarded, and `@delegate`
+  throws an error naming it.
 """
 macro delegate(T_expr, field_expr, I_expr)
     field_expr isa QuoteNode ||

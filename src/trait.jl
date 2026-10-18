@@ -72,14 +72,27 @@ function _seal_verified!(mod::Module, T::Type)
     for S in supertypes(T)
         K = _registry_key(S)
         isempty(_contract_specs(K)) && continue
-        Core.eval(mod, :($TypeContracts.verified_trait(::Type{$K}, ::Type{$T}) = $Implemented{$K}()))
+        _seal!(mod, K, T)
     end
     return nothing
 end
 
+# Used by `@verify T` (`I === nothing`) and `@verify T for_contract=I`. A bare
+# parametric name is checked for method existence only (`_verify_check`), so it is
+# not sealed.
+function _seal_verified_checked!(mod::Module, T::Type, I)
+    T isa UnionAll && return nothing
+    return isnothing(I) ? _seal_verified!(mod, T) : _seal_verified!(mod, T, I)
+end
+
 # Single-interface form, used by `@verify T for_contract=I` and `@delegate`.
-function _seal_verified!(mod::Module, T::Type, I::Type)
-    K = _registry_key(I)
+_seal_verified!(mod::Module, T::Type, I::Type) = _seal!(mod, _registry_key(I), T)
+
+# A type may be verified more than once (`@verify T` and `@verify_all`), but an existing
+# seal must not be redefined: that is an error during precompilation.
+function _seal!(mod::Module, @nospecialize(K), @nospecialize(T))
+    sig = Tuple{typeof(verified_trait), Type{K}, Type{T}}
+    which(verified_trait, Tuple{Type{K}, Type{T}}).sig === sig && return nothing
     Core.eval(mod, :($TypeContracts.verified_trait(::Type{$K}, ::Type{$T}) = $Implemented{$K}()))
     return nothing
 end
@@ -94,7 +107,9 @@ function _build_trait_expr(@nospecialize(I), @nospecialize(T), arg_lists, fns)
     checks = Expr[]
     for i in eachindex(fns)
         sig = _build_sig(arg_lists[i], T)
-        push!(checks, :(hasmethod($(fns[i]), $sig)))
+        # `Base.hasmethod` itself: the body runs in the registering module, which may
+        # define its own `hasmethod` or be a `baremodule`.
+        push!(checks, :($hasmethod($(fns[i]), $sig)))
     end
     isempty(checks) && return :($(Implemented{I}()))
     cond = foldl((a, b) -> :($a && $b), checks)

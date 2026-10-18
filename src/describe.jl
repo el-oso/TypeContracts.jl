@@ -35,8 +35,8 @@ function describe(::Type{T}; io::IO = stdout, all::Bool = !isabstracttype(T)) wh
     printstyled(io, "─"^40; color = :light_black)
     println(io)
 
-    specs = _contract_specs(T)
-    behaviors = _behavior_specs(T)
+    specs = _contract_specs(_registry_key(T))
+    behaviors = _behaviors_for(T)
     desc = _contract_desc(T)
 
     if isempty(specs) && isempty(behaviors)
@@ -113,7 +113,7 @@ function describe(::Type{T}, ::Val{:all}; io::IO = stdout) where {T}
     for S in supertypes(T)
         key = _registry_key(S)
         specs = _contract_specs(key)
-        behaviors = _behavior_specs(key)
+        behaviors = _behaviors_for(S)
         (isempty(specs) && isempty(behaviors)) && continue
         found = true
 
@@ -166,8 +166,8 @@ a `String` return value is rendered as Markdown by Documenter.
 Returns an empty string when no contract or invariants are registered for `T`.
 """
 function contract_md_string(::Type{T}) where {T}
-    specs = _contract_specs(T)
-    behaviors = _behavior_specs(T)
+    specs = _contract_specs(_registry_key(T))
+    behaviors = _behaviors_for(T)
     isempty(specs) && isempty(behaviors) && return ""
 
     io = IOBuffer()

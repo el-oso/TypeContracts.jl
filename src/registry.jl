@@ -10,9 +10,10 @@
 # This is what makes multi-package coexistence safe under Julia's precompilation
 # model — there is no shared dict to be reset out from under a dependent package.
 
-# Types (with the module that verified them) and modules registered for live
-# re-checking by the Revise extension.
-const _revise_tracked_types = Set{Tuple{Module, Type}}()
+# Types and modules registered for live re-checking by the Revise extension. Each type
+# entry is `(module that verified it, type, interface)`; the interface is `nothing` for
+# a check against the supertype chain and `I` for `@verify T for_contract=I`.
+const _revise_tracked_types = Set{Tuple{Module, Type, Any}}()
 const _revise_tracked_modules = Set{Module}()
 
 """
@@ -80,6 +81,23 @@ function _attach_contract_doc(::Type{T}) where {T}
     return nothing
 end
 
+# Called before `@contract`/`@invariants` defines `f(::Type{T})` (`f` is `_contract_specs`
+# or `_behavior_specs`). Redefining that method is an error during precompilation, so a
+# second registration for `T` throws there, naming the module that holds the first.
+# Interactively the new registration replaces the old one, with a warning.
+function _check_reregistration(f, @nospecialize(T), macro_name::String, what::String)
+    m = which(f, Tuple{Type{T}})
+    m.sig === Tuple{typeof(f), Type{T}} || return nothing
+    iszero(ccall(:jl_generating_output, Cint, ())) || error(
+        "$macro_name: $T already has $what registered in module $(m.module), and a " *
+            "method cannot be redefined during precompilation. Register a type's " *
+            "$what once, in the package that owns the type."
+    )
+    @warn "$macro_name: overwriting existing $what for $T — " *
+        "check for a conflicting $macro_name registration in another package"
+    return nothing
+end
+
 # ── Introspection helpers ─────────────────────────────────────────────
 
 function _method_registered_type(m::Method)
@@ -125,6 +143,15 @@ function registered_behaviors()::Dict{Type, Vector{BehaviorSpec}}
     return result
 end
 
+# Invariants that apply through supertype `S`: those registered for its type name
+# (`@invariants AbstractBag`) and, for a parameterized `S`, those registered for `S`
+# itself (`@invariants AbstractBag{Int}`).
+function _behaviors_for(S::Type)
+    K = _registry_key(S)
+    K === S && return _behavior_specs(K)
+    return vcat(_behavior_specs(K), _behavior_specs(S))
+end
+
 # ── Internal resolution helpers ───────────────────────────────────────
 
 """
@@ -154,11 +181,47 @@ function _extract_param(concrete_type::Type, ref::TypeParamRef)
     return Any
 end
 
-function _resolve_rt_spec(concrete_type::Type, spec::MethodSpec)
-    spec.return_type_spec === Self && return concrete_type
-    return spec.return_type_spec isa TypeParamRef ?
-        _extract_param(concrete_type, spec.return_type_spec) :
-        spec.return_type_spec
+# Stands for the type parameter at index `I` of contract `B` inside another type, as in
+# `::Vector{T}` (a bare `T` is a `TypeParamRef`). A placeholder must be a type, because it
+# is a parameter of the enclosing type.
+struct _NestedParam{B, I} end
+
+# Replace `Self` and `_NestedParam` placeholders anywhere inside type `t`. Type parameters
+# are taken from `P`'s supertype chain: `P` is the checked type, or the interface for a
+# structural check (`for_contract = I{Int}`). A type without placeholders is returned as is.
+# `vars` maps a type variable whose bounds contained a placeholder (`Type{<:Self}`) to
+# its replacement.
+function _substitute(@nospecialize(t), T::Type, @nospecialize(P), vars::IdDict = IdDict())
+    t === Self && return T
+    if t isa TypeVar
+        return get(vars, t, t)
+    elseif t isa UnionAll
+        v = t.var
+        lb, ub = _substitute(v.lb, T, P, vars), _substitute(v.ub, T, P, vars)
+        nv = lb === v.lb && ub === v.ub ? v : TypeVar(v.name, lb, ub)
+        inner = nv === v ? vars : (d = copy(vars); d[v] = nv; d)
+        body = _substitute(t.body, T, P, inner)
+        return nv === v && body === t.body ? t : UnionAll(nv, body)
+    elseif t isa Core.TypeofVararg
+        V = _substitute(t.T, T, P, vars)
+        return isdefined(t, :N) ? Vararg{V, _substitute(t.N, T, P, vars)} : Vararg{V}
+    elseif t isa Union
+        return Union{_substitute(t.a, T, P, vars), _substitute(t.b, T, P, vars)}
+    elseif t isa DataType
+        t.name === _NestedParam.body.body.name &&
+            return _extract_param(P, TypeParamRef(t.parameters[1], t.parameters[2]))
+        isempty(t.parameters) && return t
+        params = Any[_substitute(p, T, P, vars) for p in t.parameters]
+        all(i -> params[i] === t.parameters[i], eachindex(params)) && return t
+        return t.name.wrapper{params...}
+    end
+    return t
+end
+
+function _resolve_rt_spec(concrete_type::Type, spec::MethodSpec, params = concrete_type)
+    spec.return_type_spec isa TypeParamRef &&
+        return _extract_param(params, spec.return_type_spec)
+    return _substitute(spec.return_type_spec, concrete_type, params)
 end
 
 # For parameterized supertypes like AbstractBucket{Int}, return the UnionAll
@@ -173,14 +236,14 @@ function _registry_key(S::Type)
     return S
 end
 
-function _build_sig(arg_types::Vector{Any}, T::Type)
+# `Any`, not `Type`, elements: a `Vararg` is not a `Type`.
+function _build_sig(arg_types::Vector{Any}, T::Type, params = T)
     n = length(arg_types)
-    resolved = Vector{Type}(undef, n)
+    resolved = Vector{Any}(undef, n)
     @inbounds for i in 1:n
         at = arg_types[i]
-        resolved[i] = at === Self ? T :
-            at isa TypeParamRef ? _extract_param(T, at) :
-            at
+        resolved[i] = at isa TypeParamRef ? _extract_param(params, at) :
+            _substitute(at, T, params)
     end
     return Tuple{resolved...}
 end

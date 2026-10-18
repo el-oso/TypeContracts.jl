@@ -7,8 +7,8 @@ function _after_revise()
     for mod in TypeContracts._revise_tracked_modules
         TypeContracts._revise_check_module(mod)
     end
-    for (mod, T) in TypeContracts._revise_tracked_types
-        TypeContracts._check_contract_warn(mod, T)
+    for (mod, T, I) in TypeContracts._revise_tracked_types
+        TypeContracts._check_contract_warn(mod, T, I)
     end
     return
 end

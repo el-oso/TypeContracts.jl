@@ -14,6 +14,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   imported `TypeContracts`, for example when it reaches the macros through another
   package. Sealing `verified_trait` referred to `TypeContracts` by name in the caller's
   module.
+- `@delegate` no longer requires the caller to have the name of the module that owns the
+  forwarded functions in scope (a package doing `import PkgA: f` without `PkgA` failed).
+- `@test_implements` and `@test_behavior_passes` work when only the macros are imported.
+- `interface_trait` calls `Base.hasmethod`, not whatever `hasmethod` the module that
+  registered the contract sees, so a module defining its own `hasmethod`, or a
+  `baremodule`, no longer breaks it.
+- A type verified more than once, for example by `@verify T` and `@verify_all`, or by
+  `@delegate` and `@verify_all`, no longer fails precompilation with "Method overwriting
+  is not permitted": the first `verified_trait` method is kept.
+- A second `@contract` or `@invariants` for the same type throws an error naming the
+  module that holds the first, during precompilation, instead of a warning followed by
+  the "Method overwriting" error. Interactively it still warns and replaces.
+- `Vararg` arguments in a contract (`f(::Self, ::Vararg{Int})`) work with every check
+  and with `@delegate`, which threw a `MethodError` or forwarded them as one tuple.
+- `Self` and type parameters nested in other types (`::Type{Self}`, `::Type{<:Self}`,
+  `::Vector{T}`, `::AbstractArray{T}`, `:: Vector{Pair{T,Self}}`) are resolved. `Type{Self}` made a contract unsatisfiable,
+  and a nested parameter threw `UndefVarError` on the first check. `@delegate` throws
+  a clear error for a method with `Self` nested in an argument type.
+- `@verify Bucket` on a bare parametric name checks method existence only, instead
+  of reporting false return-type mismatches, and does not seal `verified_trait`.
+- `@invariants AbstractBag{Int}` invariants are run for subtypes of `AbstractBag{Int}`;
+  they were ignored.
+- `@contract` accepts a qualified type name (`@contract Base.AbstractDict{K,V}`).
+- `@verify` and `@verify_all` option values may be names in the calling module
+  (`trim_compat = CHECK_TRIM`).
+- A structural check of a type against a parameterized interface
+  (`@verify Impl for_contract = AbstractGet{Int}`, `satisfies`, `check_contract`) takes
+  the type parameters from the interface; they resolved to `Any`. A subtype checked
+  against `AbstractGet{String}` is checked with `String`, not with its own parameters.
+- The Revise re-check of `@verify T for_contract=I` checks `T` against `I`, not against
+  its supertypes.
+- `list_contract`, `describe(T; all = false)` and `contract_md_string` of a
+  parameterized type such as `AbstractBag{Int}` include the contract of `AbstractBag`.
+
+### Changed
+
+- An unknown `@verify` or `@verify_all` option (for example a misspelled
+  `subtype = true`) is an error, and so is an option not written `name = value`. They were ignored, so the
+  check ran without them.
+- A `@contract` header that names more type parameters than the type has
+  (`@contract Two{A,B,C}` for `Two{A,B}`) is an error. The extra parameters resolved to
+  `Any`, so any return type declared with them passed.
+- A `@contract` on a type alias, such as `@contract AbstractVector{T}`, is an error.
+  Subtypes are checked against the contract of the type name (`AbstractArray`), so the
+  contract was never found.
 
 ## [0.14.2] - 2026-10-17
 

@@ -42,10 +42,12 @@ macro test_implements(T_expr, S_expr)
     r = gensym("r")
     m = gensym("m")
     # esc(quote …) disables hygiene so @test resolves in the caller's module;
-    # gensyms prevent local variable collisions with caller scope.
+    # gensyms prevent local variable collisions with caller scope. TypeContracts
+    # functions are spliced in as objects, since the caller may not have the name
+    # `TypeContracts` in scope.
     return esc(
         quote
-            let $r = TypeContracts.satisfies($T_expr, $S_expr)
+            let $r = $satisfies($T_expr, $S_expr)
                 if !$r.satisfied
                     printstyled(
                         stderr,
@@ -81,7 +83,7 @@ macro test_behavior_passes(T_expr, objs_expr)
     f = gensym("f")
     return esc(
         quote
-            let $r = TypeContracts.test_behavior($T_expr, $objs_expr)
+            let $r = $test_behavior($T_expr, $objs_expr)
                 if !$r.passed
                     printstyled(
                         stderr,
@@ -121,7 +123,7 @@ function test_behavior(::Type{T}, objects) where {T}
     }[]
 
     for S in supertypes(T)
-        behaviors = _behavior_specs(_registry_key(S))
+        behaviors = _behaviors_for(S)
         isempty(behaviors) && continue
         _run_behaviors!(results, S, behaviors, objects)
     end
@@ -141,7 +143,7 @@ function test_behavior(::Type{T}, ::Type{S}, objects) where {T, S}
         Tuple{Type, String, Bool, Bool, String},
     }[]
 
-    behaviors = _behavior_specs(_registry_key(S))
+    behaviors = _behaviors_for(S)
     !isempty(behaviors) && _run_behaviors!(results, S, behaviors, objects)
 
     mandatory_failures = filter(r -> !r.passed && !r.optional, results)

@@ -125,9 +125,10 @@ function check_trim_compat(T::Type, I::Type)
         type = T, contracts = Type[], issues = Dict{Type, Vector{String}}(), passed = true,
     )
     contract_issues = String[]
+    params = _param_source(T, I)
     for spec in specs
         spec.optional && continue
-        sig = _build_sig(spec.arg_types, T)
+        sig = _build_sig(spec.arg_types, T, params)
         hasmethod(spec.f, sig) || continue
         for issue in _trim_issues(spec.f, sig)
             push!(contract_issues, "  $(spec.description): $issue (trim-unsafe)")
