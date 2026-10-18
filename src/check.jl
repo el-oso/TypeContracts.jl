@@ -1,8 +1,17 @@
 # Shared by check_contract/satisfies: warn when `spec.f` has a method for `T` whose
 # argument types are more specific than the contract's (so `hasmethod` on the exact
-# contract signature fails even though an implementation clearly exists).
+# contract signature fails even though an implementation clearly exists). The probe
+# has the contract's arity, with `T` where the contract has `Self` and `Any` elsewhere,
+# so a method of the same function that takes `T` in some other position (an unrelated
+# package's untyped method, say) does not match it.
 function _warn_if_more_specific(spec::MethodSpec, T::Type)
-    isempty(methods(spec.f, Tuple{T, Vararg{Any}})) && return nothing
+    probe = Any[
+        _mentions(==(Self), at) ? _substitute(at, T, T) :
+            at isa Core.TypeofVararg ? Vararg{Any} : Any
+            for at in spec.arg_types
+    ]
+    any(at -> _mentions(==(Self), at), spec.arg_types) || return nothing
+    isempty(methods(spec.f, Tuple{probe...})) && return nothing
     @warn "$(nameof(spec.f)) is defined for $T but its argument " *
         "types are more specific than the contract requires — " *
         "contract: $(spec.description). Widen the implementation's " *

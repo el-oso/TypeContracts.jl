@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.5] - 2026-10-18
+
+### Fixed
+
+- The "argument types are more specific than the contract requires" warning from
+  `check_contract` and `satisfies` no longer fires for a type that has no method of the
+  contract's shape. It looked for any method taking the type as its first argument, so
+  for a contract with `Self` elsewhere, such as `ldiv!(::AbstractVector, ::Self,
+  ::AbstractVector)`, an unrelated method like ChainRulesCore's `ldiv!(a, b::AbstractThunk)`
+  set it off.
+
 ## [0.14.4] - 2026-10-18
 
 ### Changed

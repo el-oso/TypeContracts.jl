@@ -545,3 +545,29 @@ end
 
     @test_throws "@verify: options are written `name = value`, got `trim_compat`" @eval OptForm @verify F trim_compat
 end
+
+@testitem "the more-specific warning matches the contract's Self position" begin
+    using Test
+    using TypeContracts
+
+    @eval module WarnPos
+    using TypeContracts
+    abstract type AbstractPre end
+    @contract AbstractPre begin
+        apply!(::AbstractVector, ::Self, ::AbstractVector)
+    end
+    struct Other end
+    # An unrelated method whose untyped first argument accepts any type.
+    apply!(a, ::Other) = a
+
+    struct NoApply end
+    struct Narrow end
+    apply!(::Vector{Int}, ::Narrow, ::AbstractVector) = nothing
+    end
+
+    r = @test_logs satisfies(WarnPos.NoApply, WarnPos.AbstractPre)
+    @test !r.satisfied
+    @test_logs (:warn, r"apply! is defined for .*Narrow but its argument types are more specific") satisfies(
+        WarnPos.Narrow, WarnPos.AbstractPre
+    )
+end
