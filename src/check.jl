@@ -156,6 +156,21 @@ function _has_verified_instance(T::Type)
     return false
 end
 
+# Concrete types that `mod` sealed in `verified_trait`, by `@verify T` (including an
+# instance such as `@verify Bucket{Int}`), `@verify_all` or `@delegate`. The seals are
+# methods, so unlike a registry they survive precompilation.
+function _sealed_types(mod::Module)
+    result = Type[]
+    for m in methods(verified_trait)
+        m.module === mod || continue
+        p = Base.unwrap_unionall(m.sig).parameters[3]
+        p isa DataType && p <: Type || continue
+        X = p.parameters[1]
+        X isa DataType && isconcretetype(X) && !(X in result) && push!(result, X)
+    end
+    return result
+end
+
 # Example value for a type parameter in the skip warning: a common type within the
 # parameter's bounds, else a concrete subtype of its upper bound.
 function _example_param(v::TypeVar)
@@ -229,8 +244,9 @@ _contract_types_in_module(mod::Module, context::Union{String, Nothing}) =
     contract_signatures(mod::Module; optional = false) -> Vector{NamedTuple}
 
 List the resolved signature of every contract method, for each concrete type in `mod`
-that `@verify_all` would check (see [`@verify_all`](@ref): bare parametric names are
-left out). Each entry is
+that `@verify_all` would check, and for each instance of a parametric type that `mod`
+verified, such as `@verify Bucket{Int}`. Bare parametric names are left out (see
+[`@verify_all`](@ref)). Each entry is
 
     (f, sig, return_type, T, contract, mandatory)
 
@@ -249,7 +265,11 @@ function contract_signatures(mod::Module; optional::Bool = false)
         f::Function, sig::Type{<:Tuple}, return_type::Type,
         T::Type, contract::Type, mandatory::Bool,
     }[]
-    for T in _contract_types_in_module(mod, nothing)
+    types = _contract_types_in_module(mod, nothing)
+    for T in _sealed_types(mod)
+        T in types || push!(types, T)
+    end
+    for T in types
         for S in supertypes(T)
             K = _registry_key(S)
             for spec in _contract_specs(K)

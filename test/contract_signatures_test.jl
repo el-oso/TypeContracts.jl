@@ -39,6 +39,7 @@
     CSForeignOwner.fget(::Local) = 2
 
     @verify Bucket{Int}
+    @verify IntBucket
     @verify_all
     end
 
@@ -62,6 +63,13 @@
         @test e.sig == Tuple{CSMod.IntBucket}
         @test e.return_type == Int
         @test isempty(filter(e -> e.T === CSMod.Bucket, entries))
+    end
+
+    @testset "an instance verified explicitly is listed once" begin
+        e = entry(CSMod.get1, CSMod.Bucket{Int})
+        @test e.sig == Tuple{CSMod.Bucket{Int}}
+        @test e.return_type == Int
+        @test length(filter(e -> e.T === CSMod.IntBucket, entries)) == 1
     end
 
     @testset "contract owned by another module" begin

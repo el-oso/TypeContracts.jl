@@ -135,7 +135,7 @@ contract_signatures(Shapes)
 contract_signatures(Shapes; optional = true)   # also lists name(::Circle)
 ```
 
-`sig` and `return_type` are exactly what `check_contract` checks, so `hasmethod(e.f, e.sig)` and `Base.return_types(e.f, e.sig)` apply directly. Bare parametric names are left out (see [Parametric types](verification.md#Parametric-types)). Contracts registered in other modules are included when the concrete type is defined in `mod`.
+`sig` and `return_type` are exactly what `check_contract` checks, so `hasmethod(e.f, e.sig)` and `Base.return_types(e.f, e.sig)` apply directly. Bare parametric names are left out (see [Parametric types](verification.md#Parametric-types)), but each instance that `mod` verifies, such as `@verify Bucket{Int}`, is listed, whichever module defines its type. Contracts registered in other modules are included when the concrete type is defined in `mod`.
 
 `contract_signatures` reads `names`, `supertypes` and the contract registry, so it is a dev/precompile-time tool and is not `juliac --trim` safe.
 
