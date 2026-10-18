@@ -230,6 +230,29 @@ macro verify(T, kwargs...)
     end
 end
 
+# Contracts are looked up by type name (`_registry_key`), so one registered on an alias
+# (`AbstractVector`, which is `AbstractArray{T,1} where T`) would never be found. A
+# header parameter past the type's own would resolve to `Any` at every check.
+function _check_header(@nospecialize(T), n::Int)
+    K = _registry_key(T)
+    K === T || error(
+        "@contract: $T is an alias of $K; register the contract on $K, " *
+            "the type that subtypes are checked against"
+    )
+    available = length(Base.unwrap_unionall(T).parameters)
+    n <= available || error(
+        "@contract: the header names $n type parameters, but $T has $available"
+    )
+    return nothing
+end
+
+function _unknown_option(macro_name::String, kw)
+    kw isa Expr && kw.head === :(=) ||
+        error("$macro_name: options are written `name = value`, got `$kw`")
+    valid = macro_name == "@verify" ? "trim_compat, subtypes, for_contract" : "trim_compat"
+    return error("$macro_name: unknown option `$(kw.args[1])`; valid options are $valid")
+end
+
 """
     @verify_all
     @verify_all trim_compat=true
@@ -264,29 +287,6 @@ area(s::Square) = ...
 end
 ```
 """
-# Contracts are looked up by type name (`_registry_key`), so one registered on an alias
-# (`AbstractVector`, which is `AbstractArray{T,1} where T`) would never be found. A
-# header parameter past the type's own would resolve to `Any` at every check.
-function _check_header(@nospecialize(T), n::Int)
-    K = _registry_key(T)
-    K === T || error(
-        "@contract: $T is an alias of $K; register the contract on $K, " *
-            "the type that subtypes are checked against"
-    )
-    available = length(Base.unwrap_unionall(T).parameters)
-    n <= available || error(
-        "@contract: the header names $n type parameters, but $T has $available"
-    )
-    return nothing
-end
-
-function _unknown_option(macro_name::String, kw)
-    kw isa Expr && kw.head === :(=) ||
-        error("$macro_name: options are written `name = value`, got `$kw`")
-    valid = macro_name == "@verify" ? "trim_compat, subtypes, for_contract" : "trim_compat"
-    return error("$macro_name: unknown option `$(kw.args[1])`; valid options are $valid")
-end
-
 macro verify_all(kwargs...)
     trim_compat = false
     for kw in kwargs

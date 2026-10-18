@@ -21,7 +21,8 @@ After each revision cycle the extension re-checks every type and module that was
 
 | Registration | What is re-checked |
 |---|---|
-| `@verify T` | `T` itself |
+| `@verify T` | `T` itself, against the contracts of its supertypes |
+| `@verify T for_contract=I` | `T` against the contract of `I` |
 | `@verify_all` | all concrete subtypes of registered contract types defined in the calling module |
 
 A warning (not an error) is emitted for each violation so the REPL session stays alive:

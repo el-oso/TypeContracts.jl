@@ -47,6 +47,12 @@ end # module
 1. **Method existence** — `hasmethod(f, Tuple{T, arg_types...})` for every mandatory spec.
 2. **Return type** — `Base.return_types(f, sig)` must produce a type `<: declared_type` for every mandatory spec with a declared return type.
 
+A bare parametric name, `@verify VectorQueue`, gets the first check only, because its type parameters are unknown; it is not marked verified for [`verified_trait`](@ref). Verify the instances your code uses, as above.
+
+The options are `trim_compat = …`, `subtypes = true` and `for_contract = I`, each written `name = value`; any other option is an error. `trim_compat` and `for_contract` may be names defined in the calling module.
+
+A type may be verified by more than one form, for example `@verify T` and `@verify_all`; it is marked verified once.
+
 !!! note
     `@verify` at module top level is fully compatible with `juliac --trim`. It runs
     during precompilation and is eliminated by the trimmer before the binary is produced.

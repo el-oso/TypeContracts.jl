@@ -194,8 +194,8 @@ implements(Dict{String,Int}, AbstractDict)  # true
 # Retroactive contract on any abstract type you don't own — no wrapper
 # or modification to the original package needed. A fresh interface name
 # is used here rather than Base.AbstractSet, which BaseTypeContracts
-# already contracts — registering over it would silently overwrite that
-# package's contract (see "Contract coherence" in Key Differences).
+# already contracts — registering a second contract for it is an error
+# during precompilation (see "Contract coherence" in Key Differences).
 @contract AbstractFiniteSet "A finite mathematical set." begin
     Base.intersect(::Self, ::Self) :: Self
     Base.union(::Self, ::Self)     :: Self
@@ -838,9 +838,9 @@ a wrapper. Rust's orphan rule prevents implementing a foreign trait for a foreig
 **Contract coherence.** TC stores each `@contract`/`@invariants` registration as a single method
 on `_contract_specs`/`_behavior_specs` keyed by the abstract type — there is only one such
 registration per type. A second package registering `@contract` for a type another package
-already contracts does not merge with it; it overwrites it (`@contract` now emits a `@warn` when
-this happens, but two packages precompiling the same overwrite independently can still hard-error
-at precompile time). This is exactly the coherence problem Rust's orphan rule and Go's
+already contracts does not merge with it: during precompilation it is an error naming the module
+that holds the first registration, and in an interactive session it replaces the first with a
+warning. This is exactly the coherence problem Rust's orphan rule and Go's
 per-consumer interface declarations are designed to prevent: TC trades that safety for the
 ability to attach contracts to foreign types, and the tradeoff needs care in any ecosystem where
 more than one package might contract the same type.
