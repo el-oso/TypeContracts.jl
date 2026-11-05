@@ -155,16 +155,16 @@ Both the description and per-method prose are:
 using TypeContracts
 
 # Add a contract to a Base abstract type.
-@contract AbstractDict{K,V} begin
-    Base.getindex(::Self, ::K) :: V
-    Base.haskey(::Self, ::K) :: Bool
-    Base.length(::Self) :: Int
+@contract AbstractUnitRange{T} begin
+    Base.first(::Self) :: T
+    Base.last(::Self) :: T
+    Base.length(::Self) :: Integer
 end
 ```
 
-`check_contract(Dict{String,Int})` then verifies that `Dict{String,Int}` satisfies this contract.
+`check_contract(UnitRange{Int})` then verifies that `UnitRange{Int}` satisfies this contract.
 
-The type may also be written qualified, such as `@contract Base.AbstractDict{K,V}` or `@contract OtherPackage.AbstractThing`. It must be the type itself, not an alias: `AbstractVector{T}` is `AbstractArray{T,1}`, and subtypes are checked against `AbstractArray`, so `@contract AbstractVector{T}` is an error.
+The type may also be written qualified, such as `@contract Base.AbstractUnitRange{T}` or `@contract OtherPackage.AbstractThing`. It must be the type itself, not an alias: `AbstractVector{T}` is `AbstractArray{T,1}`, and subtypes are checked against `AbstractArray`, so `@contract AbstractVector{T}` is an error.
 
 A type has one contract and one set of invariants. Registering a second one for the same type is an error during precompilation, whichever package it comes from; interactively, the new registration replaces the old one with a warning.
 
