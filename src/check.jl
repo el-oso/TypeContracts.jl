@@ -28,6 +28,96 @@ function _inferred_return_type(spec::MethodSpec, sig)
         Union{inferred_rts...}
 end
 
+# --- conformance read from a return annotation, without inference -----------------------------
+#
+# `f(...)::R = …` lowers every `return` to the same shape: the returned slot is guarded by
+# `isa %K`, and on the other branch it is last assigned `typeassert(convert(%K, x), %K)`, where `%K`
+# loads `R`. After that typeassert inference knows the value is `R` or narrower, so the inferred
+# return type is a subtype of `R`, and `R <: declared` implies the conformance `Base.return_types`
+# would establish. Reading it costs the method's own stored source, so it does not grow with what
+# the body calls; inference does, and over a large driver it is nearly all of a contract check.
+#
+# The match is on the RETURNED slot and its last assignment, not on the first `typeassert` in the
+# body: `y = x::Int` before `return y * 2.0` in a method annotated `::Real` is also a `typeassert`,
+# and taking it would report `Int` for a method that returns `Float64`.
+
+_isnamed(@nospecialize(x), s::Symbol) = (x isa GlobalRef && x.name === s) || x === s
+
+# The `R` in `f(...)::R`, read from every `return` of `m`, or `nothing` when any return is not
+# annotated this way or two returns disagree.
+function _return_annotation(m::Method)
+    code = Base.uncompressed_ast(m).code
+    R = nothing
+    for (r, st) in enumerate(code)
+        (st isa Core.ReturnNode && isdefined(st, :val)) || continue
+        v = st.val
+        v isa Core.SSAValue && (v = code[v.id])
+        v isa Core.SlotNumber || return nothing
+        K = nothing
+        for j in (r - 1):-1:1
+            s = code[j]
+            (Meta.isexpr(s, :(=)) && s.args[1] == v) || continue
+            rhs = s.args[2]
+            if Meta.isexpr(rhs, :call) && length(rhs.args) == 3 &&
+                    _isnamed(rhs.args[1], :typeassert) && rhs.args[3] isa Core.SSAValue
+                K = rhs.args[3]
+            end
+            break
+        end
+        isnothing(K) && return nothing
+        any(
+            s -> Meta.isexpr(s, :call) && length(s.args) == 3 && _isnamed(s.args[1], :isa) &&
+                s.args[3] == K,
+            code
+        ) || return nothing
+        t = code[K.id]
+        (t isa GlobalRef && isdefined(t.mod, t.name)) || return nothing
+        Rk = getfield(t.mod, t.name)
+        Rk isa Type || return nothing
+        if isnothing(R)
+            R = Rk
+        elseif R !== Rk
+            return nothing
+        end
+    end
+    return R
+end
+
+# A method taking keywords keeps its body, and so its annotation, in a separate `#f#N` function
+# that the positional method forwards to.
+function _keyword_body(m::Method)
+    prefix = "#" * string(m.name) * "#"
+    for st in Base.uncompressed_ast(m).code
+        for x in (st isa Expr ? st.args : Any[st])
+            x isa GlobalRef || continue
+            startswith(string(x.name), prefix) || continue
+            isdefined(x.mod, x.name) || continue
+            bms = collect(methods(getfield(x.mod, x.name)))
+            return length(bms) == 1 ? only(bms) : nothing
+        end
+    end
+    return nothing
+end
+
+function _method_annotation(m::Method)
+    R = _return_annotation(m)
+    isnothing(R) || return R
+    b = _keyword_body(m)
+    return isnothing(b) ? nothing : _return_annotation(b)
+end
+
+# Whether every method applicable to `sig` — the set `Base.return_types` widens over — is annotated
+# with a subtype of `expected`. `false` means "not shown", never "does not conform".
+function _conforms_by_annotation(@nospecialize(f), @nospecialize(sig), @nospecialize(expected))
+    ms = methods(f, sig)
+    isempty(ms) && return false
+    for m in ms
+        R = _method_annotation(m)
+        (!isnothing(R) && R <: expected) || return false
+    end
+    return true
+end
+
 # Check one mandatory spec against `T`. Returns `nothing` on success, else an
 # error line naming the requiring type `required_by` (an abstract type or interface).
 # With `return_types = false` only method existence is checked, and no inference runs.
@@ -43,6 +133,7 @@ function _check_spec(
     return_types || return nothing
     expected_rt = _resolve_rt_spec(T, spec, params)
     expected_rt === Any && return nothing
+    _conforms_by_annotation(spec.f, sig, expected_rt) && return nothing
     inferred_rt = _inferred_return_type(spec, sig)
     inferred_rt <: expected_rt && return nothing
     return "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $required_by]"
