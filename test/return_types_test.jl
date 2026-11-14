@@ -128,3 +128,40 @@ end
     # A keyword method keeps its annotation in the `#f#N` body it forwards to.
     @test TypeContracts._conforms_by_annotation(akw, Tuple{AnnOK, AbstractMatrix}, AbstractMatrix)
 end
+
+@testitem "inference that has already run proves conformance without inferring again" begin
+    using Test
+    using TypeContracts
+
+    abstract type CacheC end
+    function cop end
+    @contract CacheC begin
+        cop(::Self, A::AbstractMatrix)::AbstractMatrix
+    end
+    struct CGood <: CacheC end
+    struct CBad <: CacheC end
+    cop(::CGood, A::AbstractMatrix) = A
+    cop(::CBad, A::AbstractMatrix) = sum(A)
+
+    bycache(T) = TypeContracts._conforms_by_cache(cop, Tuple{T, AbstractMatrix}, AbstractMatrix)
+    raises(T) = try
+        TypeContracts._verify_check(T, nothing)
+        false
+    catch e
+        e isa TypeContracts.InterfaceError || rethrow()
+        true
+    end
+
+    # Nothing inferred yet: no evidence, so no shortcut.
+    @test !bycache(CGood)
+
+    # A caller infers the concrete calls it uses, as `@verify_strict`'s per-call layer does.
+    Base.return_types(cop, (CGood, Matrix{Float64}))
+    Base.return_types(cop, (CBad, Matrix{Float64}))
+    @test bycache(CGood)
+    @test !raises(CGood)
+
+    # A cached result that does not conform is not taken: inference decides, and catches it.
+    @test !bycache(CBad)
+    @test raises(CBad)
+end

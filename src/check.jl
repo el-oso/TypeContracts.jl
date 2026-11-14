@@ -106,6 +106,36 @@ function _method_annotation(m::Method)
     return isnothing(b) ? nothing : _return_annotation(b)
 end
 
+# --- conformance read from inference that has already run --------------------------------------
+#
+# Inference caches its result on the method instance for each concrete signature it has seen. A
+# caller that has already inferred the calls it uses — a test suite, a precompile workload,
+# `@verify_strict`'s per-call layer — therefore leaves the answer here, and reading it is a lookup
+# rather than an inference of the declared abstract signature. It proves conformance at those
+# signatures, not at every signature the contract admits. Only a pass is taken from it: any cached
+# result that does not conform sends the check to inference, which decides.
+function _conforms_by_cache(@nospecialize(f), @nospecialize(sig), @nospecialize(expected))
+    full = Tuple{Core.Typeof(f), sig.parameters...}
+    world = Base.get_world_counter()
+    seen = false
+    for m in methods(f, sig), mi in Base.specializations(m)
+        isnothing(mi) && continue
+        st = mi.specTypes
+        (Base.isdispatchtuple(st) && st <: full) || continue
+        isdefined(mi, :cache) || continue
+        ci = mi.cache
+        while true
+            if ci.min_world <= world <= ci.max_world
+                ci.rettype <: expected || return false
+                seen = true
+            end
+            isdefined(ci, :next) || break
+            ci = ci.next
+        end
+    end
+    return seen
+end
+
 # Whether every method applicable to `sig` — the set `Base.return_types` widens over — is annotated
 # with a subtype of `expected`. `false` means "not shown", never "does not conform".
 function _conforms_by_annotation(@nospecialize(f), @nospecialize(sig), @nospecialize(expected))
@@ -134,6 +164,7 @@ function _check_spec(
     expected_rt = _resolve_rt_spec(T, spec, params)
     expected_rt === Any && return nothing
     _conforms_by_annotation(spec.f, sig, expected_rt) && return nothing
+    _conforms_by_cache(spec.f, sig, expected_rt) && return nothing
     inferred_rt = _inferred_return_type(spec, sig)
     inferred_rt <: expected_rt && return nothing
     return "  $(spec.description) — return $(inferred_rt) ⊄ $(expected_rt)  [required by $required_by]"
