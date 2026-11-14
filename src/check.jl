@@ -298,8 +298,17 @@ end
 
 # The check run by `@verify T` (`I === nothing`) and `@verify T for_contract=I`. A bare
 # parametric name is checked for method existence only, as in `_is_checkable`.
-_verify_check(T::Type, ::Nothing) = _check_contract(T, !(T isa UnionAll))
-_verify_check(T::Type, I::Type) = _check_contract(T, I, !(T isa UnionAll))
+#
+# `return_types = false` asks for that same existence-only check on a type whose return types
+# could be inferred. The two differ by about two orders of magnitude: measured cold, in a fresh
+# process, on a generic kernel with five inlined layers, `hasmethod` answers in 0.2 ms where
+# `Base.return_types` takes 40 ms at the concrete signature and 53 ms at the abstract one a
+# contract declares. A contract with many members over large kernels spends nearly all of a check
+# in inference, so a caller that checks return types another way can decline it here.
+_verify_check(T::Type, ::Nothing; return_types::Bool = true) =
+    _check_contract(T, return_types && !(T isa UnionAll))
+_verify_check(T::Type, I::Type; return_types::Bool = true) =
+    _check_contract(T, I, return_types && !(T isa UnionAll))
 
 function _verify_subtypes(T::Type, mod::Module; trim_compat::Bool = false)
     candidates = _concrete_subtypes(T)

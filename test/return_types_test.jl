@@ -70,3 +70,43 @@
         @test threw
     end
 end
+
+@testitem "return_types=false checks the method surface and skips inference" begin
+    using Test
+    using TypeContracts
+
+    abstract type RTOff end
+    function rtop end
+    @contract RTOff begin
+        rtop(::Self, x::Float64)::Float64
+    end
+
+    struct RTGood <: RTOff end
+    struct RTWrongType <: RTOff end
+    struct RTAbsent <: RTOff end
+    rtop(::RTGood, x::Float64) = x + 1.0
+    rtop(::RTWrongType, x::Float64) = "a String"
+
+    raises(T, rt) = try
+        TypeContracts._verify_check(T, nothing; return_types = rt)
+        false
+    catch e
+        e isa TypeContracts.InterfaceError
+    end
+
+    # A declared return type the implementation violates is what inference is for, so it is caught
+    # by default and deliberately not caught without it.
+    @test !raises(RTGood, true)
+    @test !raises(RTGood, false)
+    @test raises(RTWrongType, true)
+    @test !raises(RTWrongType, false)
+
+    # Method existence does not depend on inference, so declining it must not hide an absent method.
+    @test raises(RTAbsent, true)
+    @test raises(RTAbsent, false)
+
+    # The macro takes the option, keeps its default, and still rejects a name it does not know.
+    @test (@verify RTGood return_types=false).passed
+    @test (@verify RTGood).passed
+    @test_throws LoadError @eval @verify RTGood no_such_option=false
+end

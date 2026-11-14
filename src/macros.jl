@@ -165,6 +165,14 @@ of each mandatory method for known trim-unsafe calls (`Base.return_types`,
 `invokelatest`, etc.) and emits `@warn` for any found. This is a shallow,
 heuristic check — use `TrimCheck.@validate` for exhaustive verification.
 
+With `return_types=false`, only method existence is checked and no inference
+runs. Inference is nearly all of a check's cost — measured cold on a generic
+kernel with five inlined layers, `hasmethod` answers in 0.2 ms where
+`Base.return_types` takes 40 ms — so a contract with many members over large
+kernels is dominated by it. Use it where the declared return types are verified
+another way, such as per-call checks on the concrete signatures a caller
+actually uses; the method surface is still checked in full.
+
 With `subtypes=true`, verifies every concrete subtype of the given abstract
 type rather than the type itself. Equivalent to calling `@verify` on each
 concrete subtype individually, and self-maintaining as new subtypes are added.
@@ -188,10 +196,13 @@ macro verify(T, kwargs...)
     trim_compat = false
     check_subtypes = false
     for_contract = nothing
+    return_types = true
     for kw in kwargs
         if kw isa Expr && kw.head === :(=)
             if kw.args[1] === :trim_compat
                 trim_compat = esc(kw.args[2])
+            elseif kw.args[1] === :return_types
+                return_types = esc(kw.args[2])
             elseif kw.args[1] === :subtypes
                 check_subtypes = kw.args[2]
                 check_subtypes isa Bool ||
@@ -210,7 +221,9 @@ macro verify(T, kwargs...)
     end
     if !isnothing(for_contract)
         return quote
-            let _verify_result = TypeContracts._verify_check($(esc(T)), $(esc(for_contract)))
+            let _verify_result = TypeContracts._verify_check(
+                    $(esc(T)), $(esc(for_contract)); return_types = $(return_types)
+                )
                 push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T)), $(esc(for_contract))))
                 TypeContracts._verify_hook(TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(T)), _verify_result)
                 TypeContracts._seal_verified_checked!(@__MODULE__, $(esc(T)), $(esc(for_contract)))
@@ -220,7 +233,9 @@ macro verify(T, kwargs...)
         end
     end
     return quote
-        let _verify_result = TypeContracts._verify_check($(esc(T)), nothing)
+        let _verify_result = TypeContracts._verify_check(
+                $(esc(T)), nothing; return_types = $(return_types)
+            )
             push!(TypeContracts._revise_tracked_types, (@__MODULE__, $(esc(T)), nothing))
             TypeContracts._verify_hook(TypeContracts._VERIFY_HOOK, @__MODULE__, $(esc(T)), _verify_result)
             TypeContracts._seal_verified_checked!(@__MODULE__, $(esc(T)), nothing)
