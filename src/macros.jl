@@ -165,6 +165,13 @@ of each mandatory method for known trim-unsafe calls (`Base.return_types`,
 `invokelatest`, etc.) and emits `@warn` for any found. This is a shallow,
 heuristic check — use `TrimCheck.@validate` for exhaustive verification.
 
+An implementation annotated `f(...)::R` with `R` a subtype of the declared
+return type is verified from its source and costs no inference: the annotation
+lowers to a `typeassert`, so the method cannot return anything else. Annotating
+a contract's implementations therefore makes `@verify` cheap without weakening
+it; an unannotated one, or one whose annotation is not a subtype, is inferred as
+before.
+
 With `return_types=false`, only method existence is checked and no inference
 runs. Inference is nearly all of a check's cost — measured cold on a generic
 kernel with five inlined layers, `hasmethod` answers in 0.2 ms where
